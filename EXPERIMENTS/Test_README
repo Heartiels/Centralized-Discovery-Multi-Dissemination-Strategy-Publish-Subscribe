@@ -1,0 +1,5 @@
+# Note: using test shell cript:
+# rm -fr *.out  # remove any existing out files
+# sudo mn --topo=single,x #here x represents for number of hosts according to the number of pub/sub and possible broker
+# source xpxb_strategy.sh
+# WARNING: Remember to change the strategy in config.ini
