@@ -207,7 +207,7 @@ def parseCmdLineArgs():
     parser = argparse.ArgumentParser(description="Subscriber Application")
     parser.add_argument("-n", "--name", required=True, help="Unique name for subscriber")
     parser.add_argument("-a", "--addr", default="localhost", help="IP address of subscriber (default: localhost)")
-    parser.add_argument("-p", "--port", default=5577, type=int, help="Port for subscriber communication, default=5577")
+    parser.add_argument("-p", "--port", required=True, type=int, help="Port for subscriber communication, default=5577")
     parser.add_argument("-d", "--discovery", required=True, help="Discovery service address (e.g., localhost:5555)")
     parser.add_argument("-T", "--num_topics", required=True, type=int, help="Number of topics to subscribe")
     parser.add_argument("-t", "--toggle", action="store_true", help="Enable or disable toggle for subscriber")
