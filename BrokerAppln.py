@@ -148,7 +148,7 @@ class BrokerAppln:
                 self.mw_obj.request_pubs()
                 return None
             elif self.state == self.State.DISSEMINATION:
-                # In dissemination state, the broker's event loop simply forwards messages.
+                #In dissemination state, the broker's event loop simply forwards messages.
                 self.logger.debug("BrokerAppln::invoke_operation - dissemination in progress")
                 return None
             else:
