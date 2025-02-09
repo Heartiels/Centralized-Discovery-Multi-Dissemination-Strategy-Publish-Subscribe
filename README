@@ -1,43 +1,52 @@
-CS 6381: Distributed Systems Principles – Programming Assignment 1
-Centralized Discovery, Multi-Dissemination Strategy Publish-Subscribe
-Spring 2025
+# CS 6381: Distributed Systems Principles – Programming Assignment 1
+## Centralized Discovery, Multi-Dissemination Strategy Publish–Subscribe
+**Spring 2025**
 
+---
 
-1. Overview
-This project implements a publish–subscribe middleware built on top of ZeroMQ that supports two system-wide dissemination strategies:
+### 1. Overview
+This project implements a publish–subscribe middleware built on top of ZeroMQ that supports two dissemination strategies:
 
-Direct Dissemination: Publishers send messages directly to subscribers once matching has been performed.
-ViaBroker Dissemination: Publishers send messages to a centralized Broker, which then forwards (disseminates) the messages to interested subscribers.
+- **Direct Dissemination:**  
+  Publishers send messages directly to subscribers (after topic matching).
 
-A centralized Discovery Service is used for all entities (publishers, subscribers, and the broker) to register themselves and for clients to lookup the location (IP address and port) of the entities they need to connect to. The middleware layer hides the direct use of ZeroMQ from the application code; applications interact only with the provided API.
+- **ViaBroker Dissemination:**  
+  Publishers send messages to a centralized Broker, which forwards (disseminates) the messages to interested subscribers.
 
+A centralized Discovery Service is used for all entities (publishers, subscribers, and the broker) to register themselves and allow clients to look up the location (IP address and port) of the entities they need to connect to. The middleware layer hides the details of ZeroMQ; applications interact only with the provided API.
 
-2. Project Architecture
-The system is designed with a hybrid Client-Server / Publish–Subscribe architecture:
+---
 
-Components:
-Discovery Service
-DiscoveryAppln.py: Application logic for handling registrations, is-ready checks, and lookups.
-DiscoveryMW.py: Middleware with ZeroMQ REP sockets to manage communication.
-discovery.proto: Protocol Buffers definitions for serializing Discovery messages.
-Publisher
-PublisherAppln.py: Publishes messages on specific topics.
-PublisherMW.py: Middleware layer with PUB sockets (for dissemination) and REQ sockets (for discovery).
-Subscriber
-SubscriberAppln.py: Subscribes to specific topics and receives messages.
-SubscriberMW.py: Middleware with SUB sockets (to receive messages) and REQ sockets (for discovery).
-Broker (Used in ViaBroker mode)
-BrokerAppln.py: Application logic for receiving messages from publishers and forwarding them to subscribers.
-BrokerMW.py: Middleware for Broker functionality with PUB, SUB, and REQ sockets.
+### 2. Project Architecture
+The system uses a hybrid Client–Server / Publish–Subscribe design:
 
+- **Discovery Service**  
+  - *DiscoveryAppln.py*: Application logic for handling registrations, is-ready checks, and lookups.  
+  - *DiscoveryMW.py*: Middleware using ZeroMQ REP sockets to process requests.  
+  - *discovery.proto*: Protobuf definitions for Discovery messages.
 
-3. File Structure
+- **Publishers**  
+  - *PublisherAppln.py*: Application logic for publishing messages on specific topics.  
+  - *PublisherMW.py*: Middleware layer using PUB sockets (for dissemination) and REQ sockets (to interact with the Discovery Service).
 
+- **Subscribers**  
+  - *SubscriberAppln.py*: Application logic for subscribing to topics and receiving messages.  
+  - *SubscriberMW.py*: Middleware layer using SUB sockets (to receive messages) and REQ sockets (for discovery).
+
+- **Broker** (used in the ViaBroker dissemination strategy)  
+  - *BrokerAppln.py*: Application logic，the Broker acts as an intermediary—receiving messages from publishers and forwarding them to subscribers.  
+  - *BrokerMW.py*: Middleware for the Broker, which uses a combination of PUB, SUB, and REQ sockets.
+
+---
+
+## File Structure
+
+```plaintext
 .
 ├── CS6381_MW/                     # Middleware core components
 │   ├── __init__.py                # Initialization module
 │   ├── BrokerMW.py                # Middleware logic for the Broker
-│   ├── Common.py                  # Common utilities or shared methods (not detailed)
+│   ├── Common.py                  # Common utilities or shared methods
 │   ├── discovery_pb2.py           # Protobuf-generated serialization logic
 │   ├── discovery.proto            # Protobuf definition for Discovery Service messages
 │   ├── DiscoveryMW.py             # Middleware logic for the Discovery Service
@@ -56,13 +65,14 @@ BrokerMW.py: Middleware for Broker functionality with PUB, SUB, and REQ sockets.
 ├── DiscoveryAppln.py              # Application-layer logic for the Discovery Service
 ├── KeyChanges.docx                # Change log or modification document
 ├── PublisherAppln.py              # Application-layer logic for Publishers
-├── README                         # Project documentation
+├── README.md                      # Project documentation
 ├── SubscriberAppln.py             # Application-layer logic for Subscribers
 ├── TESTING/                       # Files or data related to testing
 └── topic_selector.py              # Helper tool for topic selection
 
+---
 
-4. Environment Setup and Dependencies
+## 4. Environment Setup and Dependencies
 Prerequisites
 Python 3.6+
 
@@ -73,7 +83,7 @@ For Mininet (if testing on virtual topologies):
 sudo apt-get install mininet
 
 
-5. Running the System
+## 5. Running the System
 5.1 Local Testing
 Start the Discovery Service:
 python3 DiscoveryAppln.py -P 5 -S 4 -c config.ini
@@ -103,7 +113,7 @@ Use xterm for each host to start the Discovery Service, Publishers, Subscribers,
 Alternatively, use the provided Mininet script:
 ./mininet_1S_10H_5P_4S.sh
 
-6. Performance Testing
+## 6. Performance Testing
 Metrics:
 Latency: Measure time from publication to receipt by subscribers.
 Throughput: Messages per second under varying loads.
@@ -118,5 +128,3 @@ Authors
 Haowen Yao
 Xindong Zheng
 Yan Zhang
-
-License: Educational use for CS 6381, Spring 2025. All rights reserved.
