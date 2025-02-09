@@ -72,46 +72,48 @@ The system uses a hybrid Client–Server / Publish–Subscribe design:
 
 ---
 
-## 4. Environment Setup and Dependencies
-Prerequisites
-Python 3.6+
+### 4. Environment Setup and Dependencies
+**Prerequisites:**
+- Python 3.6 or higher
+- [ZeroMQ](http://zeromq.org/) & [pyzmq](https://pypi.org/project/pyzmq/)
+- [Protobuf](https://developers.google.com/protocol-buffers)
 
-Install the required Python libraries:
-pip install pyzmq protobuf
-
-For Mininet (if testing on virtual topologies):
-sudo apt-get install mininet
-
+---
 
 ## 5. Running the System
-5.1 Local Testing
+5.1 Direct Dissemination Mode (Multiple Publishers and Subscribers)
+Recommended start-up order:
+
 Start the Discovery Service:
-python3 DiscoveryAppln.py -P 5 -S 4 -c config.ini
+python3 DiscoveryAppln.py -P 5 -S 4 -p 5555 -c config.ini -l 10
 
 Start Publishers:
-python3 PublisherAppln.py -n pub1 -T 5 -p 5570 -c config.ini &
-python3 PublisherAppln.py -n pub2 -T 5 -p 5571 -c config.ini &
-...
+python3 PublisherAppln.py -n pub1 -a localhost -p 5577 -d localhost:5555 -T 3 -f 1 -i 100 -c config.ini -l 10
+python3 PublisherAppln.py -n pub2 -a localhost -p 5578 -d localhost:5555 -T 3 -f 1 -i 100 -c config.ini -l 10
+# (Launch as many publisher instances as desired.)
 
 Start Subscribers:
-python3 SubscriberAppln.py -n sub1 -T 5 -c config.ini &
-python3 SubscriberAppln.py -n sub2 -T 5 -c config.ini &
-...
+python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f latency.json
+python3 SubscriberAppln.py -n sub2 -a localhost -p 5561 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f latency2.json
+# (Launch as many subscriber instances as desired.)
 
-If using ViaBroker mode, start the Broker:
-python3 BrokerAppln.py -n broker -p 5560 -c config.ini
+5.2 ViaBroker Dissemination Mode
+In this mode, the Broker serves as the intermediary. Recommended start-up order:
 
-Alternatively, use the provided script:
-./local_5P_4S.sh
+Start the Discovery Service:
+python3 DiscoveryAppln.py -P 5 -S 4 -p 5555 -c config.ini -l 10
 
-5.2 Mininet Testing
-Launch a Mininet topology:
-sudo mn --topo=single,10 --mac --switch ovsk --controller remote
+Start the Broker:
+python3 BrokerAppln.py -n broker -a localhost -p 5570 -d localhost:5555 -T 3 -c config.ini -l 10
 
-Use xterm for each host to start the Discovery Service, Publishers, Subscribers, and Broker (similar to local testing).
+Start Publishers:
+python3 PublisherAppln.py -n pub1 -a localhost -p 5577 -d localhost:5555 -T 3 -f 1 -i 100 -c config.ini -l 10
+python3 PublisherAppln.py -n pub2 -a localhost -p 5578 -d localhost:5555 -T 3 -f 1 -i 100 -c config.ini -l 10
 
-Alternatively, use the provided Mininet script:
-./mininet_1S_10H_5P_4S.sh
+Start Subscribers:
+python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f latency.json
+python3 SubscriberAppln.py -n sub2 -a localhost -p 5561 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f late
+
 
 ## 6. Performance Testing
 Metrics:
@@ -123,6 +125,8 @@ Methodology:
 Modify message size, frequency, and number of participants.
 For Mininet, test with network constraints (e.g., bandwidth, latency, packet loss).
 Log results to JSON/CSV files for analysis.
+
+https://youtu.be/rihmkwGVek8
 
 Authors
 Haowen Yao
