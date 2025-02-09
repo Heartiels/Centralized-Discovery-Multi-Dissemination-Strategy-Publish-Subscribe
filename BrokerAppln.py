@@ -50,7 +50,6 @@ class BrokerAppln:
         try:
             self.logger.info("BrokerAppln::configure")
             self.state = self.State.CONFIGURE
-
             self.name = args.name
             self.num_topics = args.num_topics
 
@@ -82,6 +81,8 @@ class BrokerAppln:
             self.mw_obj.set_upcall_handle(self)
 
             self.state = self.State.REGISTER
+            self.logger.debug("BrokerAppln::driver - waiting 3 seconds for subscribers to connect...")
+            time.sleep(3)
             self.mw_obj.event_loop(timeout=0)
             self.logger.info("BrokerAppln::driver completed")
         except Exception as e:
@@ -119,8 +120,10 @@ class BrokerAppln:
     def pubslookup_response(self, lookup_resp):
         try:
             self.logger.info("BrokerAppln::pubslookup_response")
-            # lookup_resp.array contains the list of publishers to which broker must connect.
             for pub in lookup_resp.array:
+                if pub.id == self.name:
+                    self.logger.debug(f"Skipping broker's own registration: {pub.id}")
+                    continue
                 addr = pub.addr
                 port = pub.port
                 self.mw_obj.lookup_bind(addr, port)

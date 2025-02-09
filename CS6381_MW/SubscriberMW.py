@@ -56,6 +56,7 @@ class SubscriberMW:
         self.logging_dict = {}
         self.filename = None
         self.iters = 0
+        self.threshold = 50
         self.dissemination = None  # "Direct" or "Broker"
 
     def configure(self, args):
@@ -140,22 +141,32 @@ class SubscriberMW:
             self.logger.error(f"SubscriberMW::plz_lookup error: {e}")
             raise e
 
-    def event_loop(self, timeout=None):
-        try:
-            self.logger.debug("SubscriberMW::event_loop - starting event loop")
-            while self.handle_events:
-                events = dict(self.poller.poll(timeout=timeout))
-                if not events:
-                    timeout = self.upcall_obj.invoke_operation()
-                elif self.req in events:
-                    timeout = self.handle_reply()
-                elif self.sub in events:
-                    message = self.sub.recv_string()
-                    self.process_message(message)
-            self.logger.info("SubscriberMW::event_loop - exiting event loop")
-        except Exception as e:
-            self.logger.error(f"SubscriberMW::event_loop error: {e}")
-            raise e
+    def event_loop(self, timeout=1000):
+        start_time = time.time()
+        self.logger.debug("SubscriberMW::event_loop - starting event loop")
+        while self.handle_events:
+            if timeout is None:
+                timeout = 1000
+            events = dict(self.poller.poll(timeout=timeout))
+            if not events:
+                timeout = self.upcall_obj.invoke_operation()
+                if timeout is None:
+                    timeout = 1000
+                if time.time() - start_time > 100:
+                    self.logger.info("No messages received for 100 seconds, saving latency log and exiting.")
+                    with open(self.filename, "w") as f:
+                        json.dump(self.logging_dict, f, indent=4)
+                    break
+            elif self.req in events:
+                timeout = self.handle_reply()
+                if timeout is None:
+                    timeout = 1000
+            elif self.sub in events:
+                message = self.sub.recv_string()
+                self.process_message(message)
+            else:
+                self.logger.error("Unknown event in SubscriberMW::event_loop")
+        self.logger.info("SubscriberMW::event_loop - exiting event loop")
 
     def handle_reply(self):
         try:
@@ -177,32 +188,39 @@ class SubscriberMW:
 
     def process_message(self, message):
         try:
+            self.logger.debug(f"Processing received message: {message}")
             parts = message.split(":")
             if len(parts) != 3:
                 self.logger.error(f"Malformed message received: {message}")
                 return
+
             topic, content, timestamp = parts
-            latency = (time.time() - float(timestamp)) * 1000  # 毫秒
+            latency = (time.time() - float(timestamp)) * 1000
             self.logger.info(f"Received topic: {topic}, latency: {latency:.2f} ms")
+
             if topic not in self.logging_dict:
                 self.logging_dict[topic] = [latency]
             else:
                 self.logging_dict[topic].append(latency)
+
             self.iters += 1
-            if self.iters >= 200:
+            self.logger.debug(f"Message count: {self.iters}, current logging_dict: {self.logging_dict}")
+            if self.iters >= self.threshold:
                 with open(self.filename, "w") as f:
-                    import json
                     json.dump(self.logging_dict, f, indent=4)
                 self.logger.info("SubscriberMW::process_message - saved latency log")
                 self.handle_events = False
+
         except Exception as e:
-            self.logger.error(f"SubscriberMW::process_message error: {e}")
+            self.logger.error(f"Error in process_message: {e}")
             raise e
+
 
     def lookup_bind(self, addr, port):
         try:
             self.logger.debug(f"SubscriberMW::lookup_bind - connecting SUB socket to tcp://{addr}:{port}")
             self.sub.connect(f"tcp://{addr}:{port}")
+            time.sleep(1)
         except Exception as e:
             self.logger.error(f"SubscriberMW::lookup_bind error: {e}")
             raise e

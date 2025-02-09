@@ -77,17 +77,31 @@ class BrokerMW:
         try:
             self.logger.info("BrokerMW::event_loop - starting event loop")
             while self.handle_events:
+                if timeout is None:
+                    timeout = 1000
+                if (hasattr(self.upcall_obj, "state") and 
+                    self.upcall_obj.state.name == "DISSEMINATE" and 
+                    not self.dissemination_delay_done):
+                    self.logger.debug("BrokerMW::event_loop - in DISSEMINATION state; sleeping 3 seconds to allow subscribers to connect")
+                    time.sleep(3)
+                    self.dissemination_delay_done = True
                 events = dict(self.poller.poll(timeout=timeout))
                 if not events:
                     timeout = self.upcall_obj.invoke_operation()
+                    if timeout is None:
+                        timeout = 1000
                 elif self.req in events:
                     timeout = self.handle_reply()
+                    if timeout is None:
+                        timeout = 1000
                 elif self.sub in events:
                     # Receive message from publishers and forward to subscribers
                     message = self.sub.recv_string()
                     self.logger.debug(f"BrokerMW::event_loop - received message: {message}")
+                    time.sleep(0.02)
                     self.pub.send_string(message)
-
+                else:
+                    self.logger.error("Unknown event in BrokerMW::event_loop")
             self.logger.info("BrokerMW::event_loop - exiting event loop")
         except Exception as e:
             self.logger.error(f"BrokerMW::event_loop error: {e}")

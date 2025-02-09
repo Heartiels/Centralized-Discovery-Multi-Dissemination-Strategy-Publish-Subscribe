@@ -62,8 +62,6 @@ class SubscriberAppln:
         """Initialize the middleware object."""
         try:
             self.logger.debug("SubscriberAppln::configure")
-
-            # Initialize application variables
             self.name = args.name
             self.num_topics = args.num_topics
 
@@ -75,10 +73,10 @@ class SubscriberAppln:
             self.dissemination = config["Dissemination"]["Strategy"]
 
             # Get topic list
-            self.logger.debug("SubscriberAppln::configure - selecting topic list")
             ts = TopicSelector()
             self.topiclist = ts.interest(self.num_topics)
-
+            self.logger.info(f"SubscriberAppln::configure - selected topics: {self.topiclist}")
+            
             # Initialize middleware
             self.logger.debug("SubscriberAppln::configure - initializing middleware object")
             self.mw_obj = SubscriberMW(self.logger)
@@ -93,18 +91,11 @@ class SubscriberAppln:
         """Driver program."""
         try:
             self.logger.info("SubscriberAppln::driver")
-
-            # Print debugging information
             self.dump()
-
-            # Set up middleware's upcall handle
             self.logger.debug("SubscriberAppln::driver - setting up upcall handle")
             self.mw_obj.set_upcall_handle(self)
-
-            # Enter middleware event loop
             self.state = self.State.REGISTER
-            self.mw_obj.event_loop(timeout=0)
-
+            self.mw_obj.event_loop()
             self.logger.info("SubscriberAppln::driver completed")
         except Exception as e:
             self.logger.error(f"Error in driver: {e}")
@@ -114,26 +105,21 @@ class SubscriberAppln:
         """Handle operations based on current state."""
         try:
             self.logger.info("SubscriberAppln::invoke_operation")
-
             if self.state == self.State.REGISTER:
                 self.logger.debug("SubscriberAppln::invoke_operation - registering with discovery service")
                 self.mw_obj.register(self.name, self.topiclist)
                 return None
-
             elif self.state == self.State.ISREADY:
                 self.logger.debug("SubscriberAppln::invoke_operation - checking readiness")
                 self.mw_obj.is_ready()
                 return None
-
             elif self.state == self.State.LOOKUP:
                 self.logger.info("SubscriberAppln::invoke_operation - performing lookup")
                 self.mw_obj.plz_lookup(self.topiclist)
                 return None
-
             elif self.state == self.State.ACCEPT:
                 self.logger.info("SubscriberAppln::invoke_operation - ready to accept dissemination")
                 return None
-
             else:
                 raise ValueError("Undefined state in SubscriberAppln::invoke_operation")
         except Exception as e:
@@ -173,12 +159,9 @@ class SubscriberAppln:
         """Handle lookup response."""
         try:
             self.logger.info("SubscriberAppln::lookup_response")
-
             self.logger.debug(f"lookup_resp: {lookup_resp}")
-
             for entry in lookup_resp.array:
                 self.mw_obj.lookup_bind(entry.addr, entry.port)
-
             self.state = self.State.ACCEPT
             return 0
         except Exception as e:
@@ -220,11 +203,9 @@ def parseCmdLineArgs():
 def main():
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     logger = logging.getLogger("SubscriberAppln")
-
     try:
         args = parseCmdLineArgs()
         logger.setLevel(args.loglevel)
-
         sub_app = SubscriberAppln(logger)
         sub_app.configure(args)
         sub_app.driver()

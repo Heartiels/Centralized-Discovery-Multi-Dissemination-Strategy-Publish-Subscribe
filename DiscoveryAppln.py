@@ -205,20 +205,13 @@ class DiscoveryAppln():
         self.logger.info("DiscoveryAppln::pubslookup_response started")
         try:
             lookup_resp = discovery_pb2.LookupPubByTopicResp()
-            if self.dissemination == "Broker":
-                temp = discovery_pb2.RegistrantInfo()
-                temp.id = "Broker"
-                temp.addr = self.broker_addr
-                temp.port = self.broker_port
-                lookup_resp.array.append(temp)
-            else:
-                for topic, pub_list in self.hm.items():
-                    for tup in pub_list:
-                        temp = discovery_pb2.RegistrantInfo()
-                        temp.id = tup[0]
-                        temp.addr = tup[1]
-                        temp.port = tup[2]
-                        lookup_resp.array.append(temp)
+            for topic, pub_list in self.hm.items():
+                for tup in pub_list:
+                    temp = discovery_pb2.RegistrantInfo()
+                    temp.id = tup[0]
+                    temp.addr = tup[1]
+                    temp.port = tup[2]
+                    lookup_resp.array.append(temp)
             discovery_resp = discovery_pb2.DiscoveryResp()
             discovery_resp.msg_type = discovery_pb2.MsgTypes.TYPE_LOOKUP_ALL_PUBS
             discovery_resp.lookup_resp.CopyFrom(lookup_resp)

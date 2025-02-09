@@ -120,9 +120,10 @@ class PublisherAppln ():
       self.dissemination = config["Dissemination"]["Strategy"]
     
       # Now get our topic list of interest
-      self.logger.debug ("PublisherAppln::configure - selecting our topic list")
-      ts = TopicSelector ()
-      self.topiclist = ts.interest (self.num_topics)  # let topic selector give us the desired num of topics
+      ts = TopicSelector()
+      self.topiclist = ts.interest(self.num_topics)
+      self.logger.info(f"PublisherAppln::configure - selected topics: {self.topiclist}")
+
 
       # Now setup up our underlying middleware object to which we delegate
       # everything
@@ -230,6 +231,9 @@ class PublisherAppln ():
         # We are here because both registration and is ready is done. So the only thing
         # left for us as a publisher is dissemination, which we do it actively here.
         self.logger.debug ("PublisherAppln::invoke_operation - start Disseminating")
+
+        self.logger.debug("PublisherAppln::invoke_operation - sleeping for 3 seconds to allow subscribers to connect")
+        time.sleep(3)
 
         # Now disseminate topics at the rate at which we have configured ourselves.
         ts = TopicSelector ()

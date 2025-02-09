@@ -69,15 +69,21 @@ class PublisherMW:
             self.logger.error(f"PublisherMW::configure error: {e}")
             raise e
 
-    def event_loop(self, timeout=None):
+    def event_loop(self, timeout=1000):
         try:
             self.logger.info("PublisherMW::event_loop - starting event loop")
             while self.handle_events:
+                if timeout is None:
+                    timeout = 1000
                 events = dict(self.poller.poll(timeout=timeout))
                 if not events:
                     timeout = self.upcall_obj.invoke_operation()
+                    if timeout is None:
+                        timeout = 1000
                 elif self.req in events:
                     timeout = self.handle_reply()
+                    if timeout is None:
+                        timeout = 1000
                 else:
                     raise Exception("Unknown event in PublisherMW::event_loop")
             self.logger.info("PublisherMW::event_loop - exiting event loop")
