@@ -114,17 +114,10 @@ Start Subscribers:
 python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f latency.json
 python3 SubscriberAppln.py -n sub2 -a localhost -p 5561 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f late
 
+---
 
-## 6. Performance Testing
-Metrics:
-Latency: Measure time from publication to receipt by subscribers.
-Throughput: Messages per second under varying loads.
-Scalability: Impact of increasing the number of publishers/subscribers.
-
-Methodology:
-Modify message size, frequency, and number of participants.
-For Mininet, test with network constraints (e.g., bandwidth, latency, packet loss).
-Log results to JSON/CSV files for analysis.
+## 6. Demonstration Video
+A demonstration video is provided with this project. The video shows:
 
 https://youtu.be/rihmkwGVek8
 
