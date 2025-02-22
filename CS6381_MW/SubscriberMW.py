@@ -40,6 +40,7 @@ import logging
 import configparser
 from CS6381_MW import discovery_pb2
 
+
 class SubscriberMW:
     def __init__(self, logger):
         self.logger = logger
@@ -50,13 +51,14 @@ class SubscriberMW:
         self.port = None
         self.upcall_obj = None
         self.handle_events = True
+        self.msg_count = 0
 
         # For latency logging
         self.toggle = None
         self.logging_dict = {}
         self.filename = None
         self.iters = 0
-        self.threshold = 50
+        self.threshold = 500
         self.dissemination = None  # "Direct" or "Broker"
 
     def configure(self, args):
@@ -79,10 +81,23 @@ class SubscriberMW:
             self.poller.register(self.req, zmq.POLLIN)
             self.poller.register(self.sub, zmq.POLLIN)
 
-            connect_str = f"tcp://{args.discovery}"
-            self.req.connect(connect_str)
+            # connect_str = f"tcp://{args.discovery}"
+            # self.req.connect(connect_str)
         except Exception as e:
             self.logger.error(f"SubscriberMW::configure error: {e}")
+            raise e
+
+    def update_discovery_address(self, addr, port):
+        """Update the Discovery service address."""
+        try:
+            self.logger.info(f"SubscriberMW::update_discovery_address - {addr}:{port}")
+            self.req.close()
+            context = zmq.Context()
+            self.req = context.socket(zmq.REQ)
+            self.poller.register(self.req, zmq.POLLIN)
+            self.req.connect(f"tcp://{addr}:{port}")
+        except Exception as e:
+            self.logger.error(f"SubscriberMW::update_discovery_address error: {e}")
             raise e
 
     def register(self, name, topiclist):
@@ -112,28 +127,17 @@ class SubscriberMW:
             self.logger.error(f"SubscriberMW::register error: {e}")
             raise e
 
-    def is_ready(self):
-        try:
-            self.logger.debug("SubscriberMW::is_ready")
-            isready_msg = discovery_pb2.IsReadyReq()
-            disc_req = discovery_pb2.DiscoveryReq()
-            disc_req.msg_type = discovery_pb2.TYPE_ISREADY
-            disc_req.isready_req.CopyFrom(isready_msg)
-            buf2send = disc_req.SerializeToString()
-            self.req.send(buf2send)
-            self.logger.debug("SubscriberMW::is_ready - sent readiness check")
-        except Exception as e:
-            self.logger.error(f"SubscriberMW::is_ready error: {e}")
-            raise e
-
     def plz_lookup(self, topiclist):
+        """Send a lookup request to Discovery."""
         try:
             self.logger.info("SubscriberMW::plz_lookup")
             lookup_req = discovery_pb2.LookupPubByTopicReq()
             lookup_req.topiclist.extend(topiclist)
+
             disc_req = discovery_pb2.DiscoveryReq()
             disc_req.msg_type = discovery_pb2.TYPE_LOOKUP_PUB_BY_TOPIC
             disc_req.lookup_req.CopyFrom(lookup_req)
+
             buf2send = disc_req.SerializeToString()
             self.req.send(buf2send)
             self.logger.debug("SubscriberMW::plz_lookup - sent lookup request")
@@ -141,31 +145,92 @@ class SubscriberMW:
             self.logger.error(f"SubscriberMW::plz_lookup error: {e}")
             raise e
 
+    # def is_ready(self):
+    #     try:
+    #         self.logger.debug("SubscriberMW::is_ready")
+    #         isready_msg = discovery_pb2.IsReadyReq()
+    #         disc_req = discovery_pb2.DiscoveryReq()
+    #         disc_req.msg_type = discovery_pb2.TYPE_ISREADY
+    #         disc_req.isready_req.CopyFrom(isready_msg)
+    #         buf2send = disc_req.SerializeToString()
+    #         self.req.send(buf2send)
+    #         self.logger.debug("SubscriberMW::is_ready - sent readiness check")
+    #     except Exception as e:
+    #         self.logger.error(f"SubscriberMW::is_ready error: {e}")
+    #         raise e
+
+    # def plz_lookup(self, topiclist):
+    #     try:
+    #         self.logger.info("SubscriberMW::plz_lookup")
+    #         lookup_req = discovery_pb2.LookupPubByTopicReq()
+    #         lookup_req.topiclist.extend(topiclist)
+    #         disc_req = discovery_pb2.DiscoveryReq()
+    #         disc_req.msg_type = discovery_pb2.TYPE_LOOKUP_PUB_BY_TOPIC
+    #         disc_req.lookup_req.CopyFrom(lookup_req)
+    #         buf2send = disc_req.SerializeToString()
+    #         self.req.send(buf2send)
+    #         self.logger.debug("SubscriberMW::plz_lookup - sent lookup request")
+    #     except Exception as e:
+    #         self.logger.error(f"SubscriberMW::plz_lookup error: {e}")
+    #         raise e
+
+    # def event_loop(self, timeout=1000):
+    #     start_time = time.time()
+    #     self.logger.debug("SubscriberMW::event_loop - starting event loop")
+    #     while self.handle_events:
+    #         if timeout is None:
+    #             timeout = 1000
+    #         events = dict(self.poller.poll(timeout=timeout))
+    #         if not events:
+    #             timeout = self.upcall_obj.invoke_operation()
+    #             if timeout is None:
+    #                 timeout = 1000
+    #             if time.time() - start_time > 100:
+    #                 self.logger.info("No messages received for 100 seconds, saving latency log and exiting.")
+    #                 with open(self.filename, "w") as f:
+    #                     json.dump(self.logging_dict, f, indent=4)
+    #                 break
+    #         elif self.req in events:
+    #             timeout = self.handle_reply()
+    #             if timeout is None:
+    #                 timeout = 1000
+    #         elif self.sub in events:
+    #             message = self.sub.recv_string()
+    #             self.process_message(message)
+    #         else:
+    #             self.logger.error("Unknown event in SubscriberMW::event_loop")
+    #     self.logger.info("SubscriberMW::event_loop - exiting event loop")
+
     def event_loop(self, timeout=1000):
-        start_time = time.time()
+        """Main event loop for receiving messages."""
         self.logger.debug("SubscriberMW::event_loop - starting event loop")
         while self.handle_events:
             if timeout is None:
                 timeout = 1000
             events = dict(self.poller.poll(timeout=timeout))
+
             if not events:
                 timeout = self.upcall_obj.invoke_operation()
                 if timeout is None:
                     timeout = 1000
-                if time.time() - start_time > 100:
-                    self.logger.info("No messages received for 100 seconds, saving latency log and exiting.")
-                    with open(self.filename, "w") as f:
-                        json.dump(self.logging_dict, f, indent=4)
-                    break
+
             elif self.req in events:
                 timeout = self.handle_reply()
                 if timeout is None:
                     timeout = 1000
+
             elif self.sub in events:
                 message = self.sub.recv_string()
                 self.process_message(message)
+
             else:
                 self.logger.error("Unknown event in SubscriberMW::event_loop")
+
+            if self.msg_count >= self.threshold:
+                self.logger.info("Received 5000 messages, exiting...")
+                self.save_latency_log()
+                self.disable_event_loop()
+
         self.logger.info("SubscriberMW::event_loop - exiting event loop")
 
     def handle_reply(self):
@@ -176,8 +241,8 @@ class SubscriberMW:
             disc_resp.ParseFromString(bytes_rcvd)
             if disc_resp.msg_type == discovery_pb2.TYPE_REGISTER:
                 return self.upcall_obj.register_response(disc_resp.register_resp)
-            elif disc_resp.msg_type == discovery_pb2.TYPE_ISREADY:
-                return self.upcall_obj.isready_response(disc_resp.isready_resp)
+            # elif disc_resp.msg_type == discovery_pb2.TYPE_ISREADY:
+            #     return self.upcall_obj.isready_response(disc_resp.isready_resp)
             elif disc_resp.msg_type == discovery_pb2.TYPE_LOOKUP_PUB_BY_TOPIC:
                 return self.upcall_obj.lookup_response(disc_resp.lookup_resp)
             else:
@@ -186,7 +251,36 @@ class SubscriberMW:
             self.logger.error(f"SubscriberMW::handle_reply error: {e}")
             raise e
 
+    # def process_message(self, message):
+    #     try:
+    #         self.logger.debug(f"Processing received message: {message}")
+    #         parts = message.split(":")
+    #         if len(parts) != 3:
+    #             self.logger.error(f"Malformed message received: {message}")
+    #             return
+    #
+    #         topic, content, timestamp = parts
+    #         latency = (time.time() - float(timestamp)) * 1000
+    #         self.logger.info(f"Received topic: {topic}, latency: {latency:.2f} ms")
+    #
+    #         if topic not in self.logging_dict:
+    #             self.logging_dict[topic] = [latency]
+    #         else:
+    #             self.logging_dict[topic].append(latency)
+    #
+    #         self.iters += 1
+    #         self.logger.debug(f"Message count: {self.iters}, current logging_dict: {self.logging_dict}")
+    #         if self.iters >= self.threshold:
+    #             with open(self.filename, "w") as f:
+    #                 json.dump(self.logging_dict, f, indent=4)
+    #             self.logger.info("SubscriberMW::process_message - saved latency log")
+    #             self.handle_events = False
+
+        # except Exception as e:
+        #     self.logger.error(f"Error in process_message: {e}")
+        #     raise e
     def process_message(self, message):
+        """Process received message and log latency."""
         try:
             self.logger.debug(f"Processing received message: {message}")
             parts = message.split(":")
@@ -203,18 +297,21 @@ class SubscriberMW:
             else:
                 self.logging_dict[topic].append(latency)
 
-            self.iters += 1
-            self.logger.debug(f"Message count: {self.iters}, current logging_dict: {self.logging_dict}")
-            if self.iters >= self.threshold:
-                with open(self.filename, "w") as f:
-                    json.dump(self.logging_dict, f, indent=4)
-                self.logger.info("SubscriberMW::process_message - saved latency log")
-                self.handle_events = False
+            self.msg_count += 1
+            self.logger.debug(f"Message count: {self.msg_count}")
 
         except Exception as e:
             self.logger.error(f"Error in process_message: {e}")
             raise e
 
+    def save_latency_log(self):
+        """Save latency log to file."""
+        try:
+            self.logger.info("Saving latency log to file")
+            with open(self.filename, "w") as f:
+                json.dump(self.logging_dict, f, indent=4)
+        except Exception as e:
+            self.logger.error(f"Error saving latency log: {e}")
 
     def lookup_bind(self, addr, port):
         try:

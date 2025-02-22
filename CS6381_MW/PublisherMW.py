@@ -42,12 +42,17 @@ class PublisherMW:
         self.upcall_obj = None
         self.handle_events = True
         self.dissemination = None  # "Direct" or "Broker"
+        self.discovery_addr = None
+        self.discovery_port = None
+        self.broker_addr = None
+        self.broker_port = None
 
     def configure(self, args):
         try:
             self.logger.info("PublisherMW::configure")
             self.port = args.port
             self.addr = args.addr
+            self.discovery_addr, self.discovery_port = args.discovery.split(":")
 
             config = configparser.ConfigParser()
             config.read(args.config)
@@ -59,8 +64,9 @@ class PublisherMW:
             self.pub = context.socket(zmq.PUB)
             self.poller.register(self.req, zmq.POLLIN)
 
-            connect_str = "tcp://" + args.discovery
-            self.req.connect(connect_str)
+            # connect_str = "tcp://" + args.discovery
+            # self.req.connect(connect_str)
+            self.connect_to_discovery()
 
             bind_string = "tcp://*:" + str(self.port)
             self.pub.bind(bind_string)
@@ -68,6 +74,24 @@ class PublisherMW:
         except Exception as e:
             self.logger.error(f"PublisherMW::configure error: {e}")
             raise e
+
+    def connect_to_discovery(self):
+        """Connect to the Discovery service."""
+        if self.discovery_addr and self.discovery_port:
+            connect_str = f"tcp://{self.discovery_addr}:{self.discovery_port}"
+            self.req.connect(connect_str)
+            self.logger.info(f"Connected to Discovery at {connect_str}")
+
+    def update_discovery_address(self, addr, port):
+        """Update the Discovery service address."""
+        self.logger.info(f"New Discovery Address: {addr}:{port}")
+        self.discovery_addr = addr
+        self.discovery_port = port
+        self.req.close()
+        context = zmq.Context()
+        self.req = context.socket(zmq.REQ)
+        self.poller.register(self.req, zmq.POLLIN)
+        self.connect_to_discovery()
 
     def event_loop(self, timeout=1000):
         try:
@@ -131,19 +155,38 @@ class PublisherMW:
             self.logger.error(f"PublisherMW::register error: {e}")
             raise e
 
-    def is_ready(self):
+    def deregister(self, name):
+        """向 Discovery 发送注销请求"""
         try:
-            self.logger.info("PublisherMW::is_ready")
-            isready_req = discovery_pb2.IsReadyReq()
+            self.logger.info("PublisherMW::deregister")
+            dereg_req = discovery_pb2.DeregisterReq()
+            dereg_req.role = discovery_pb2.ROLE_PUBLISHER
+            dereg_req.id = name
+
             disc_req = discovery_pb2.DiscoveryReq()
-            disc_req.msg_type = discovery_pb2.TYPE_ISREADY
-            disc_req.isready_req.CopyFrom(isready_req)
+            disc_req.msg_type = discovery_pb2.TYPE_DEREGISTER
+            disc_req.deregister_req.CopyFrom(dereg_req)
+
             buf2send = disc_req.SerializeToString()
-            self.logger.debug("PublisherMW::is_ready - sending readiness check")
             self.req.send(buf2send)
+            self.logger.info("Publisher successfully deregistered.")
         except Exception as e:
-            self.logger.error(f"PublisherMW::is_ready error: {e}")
+            self.logger.error(f"PublisherMW::deregister error: {e}")
             raise e
+
+    # def is_ready(self):
+    #     try:
+    #         self.logger.info("PublisherMW::is_ready")
+    #         isready_req = discovery_pb2.IsReadyReq()
+    #         disc_req = discovery_pb2.DiscoveryReq()
+    #         disc_req.msg_type = discovery_pb2.TYPE_ISREADY
+    #         disc_req.isready_req.CopyFrom(isready_req)
+    #         buf2send = disc_req.SerializeToString()
+    #         self.logger.debug("PublisherMW::is_ready - sending readiness check")
+    #         self.req.send(buf2send)
+    #     except Exception as e:
+    #         self.logger.error(f"PublisherMW::is_ready error: {e}")
+    #         raise e
 
     def disseminate(self, id, topic, data):
         try:

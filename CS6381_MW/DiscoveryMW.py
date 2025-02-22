@@ -107,8 +107,8 @@ class DiscoveryMW():
             if disc_req.msg_type == discovery_pb2.TYPE_REGISTER:
                 timeout = self.upcall_obj.register_request(disc_req.register_req)
 
-            elif disc_req.msg_type == discovery_pb2.TYPE_ISREADY:
-                timeout = self.upcall_obj.isready_response(disc_req.isready_req)
+            # elif disc_req.msg_type == discovery_pb2.TYPE_ISREADY:
+            #     timeout = self.upcall_obj.isready_response(disc_req.isready_req)
 
             elif disc_req.msg_type == discovery_pb2.TYPE_LOOKUP_ALL_PUBS:
                 timeout = self.upcall_obj.pubslookup_response(disc_req.lookup_req)
