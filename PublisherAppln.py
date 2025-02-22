@@ -61,7 +61,7 @@ from CS6381_MW import discovery_pb2
 
 # import any other packages you need.
 from enum import Enum  # for an enumeration we are using to describe what state we are in
-
+from kazoo.client import KazooClient
 ##################################
 #       PublisherAppln class
 ##################################
@@ -93,6 +93,11 @@ class PublisherAppln ():
     self.mw_obj = None # handle to the underlying Middleware object
     self.logger = logger  # internal logger for print statements
 
+    self.zk = None
+    self.zk_host = None
+    self.discovery_addr = None
+    self.discovery_port = None
+    self.iters=5000
   ########################################
   # configure/initialize
   ########################################
@@ -118,6 +123,13 @@ class PublisherAppln ():
       config.read (args.config)
       self.lookup = config["Discovery"]["Strategy"]
       self.dissemination = config["Dissemination"]["Strategy"]
+
+      #kazoo initialization
+
+      self.zk_host = config["ZooKeeper"]["Host"]
+      self.zk = KazooClient(hosts=self.zk_host)
+      self.zk.start()
+      self.zk.DataWatch("/cs6381/discovery/leader", self.on_leader_change)
     
       # Now get our topic list of interest
       ts = TopicSelector()
@@ -135,6 +147,19 @@ class PublisherAppln ():
       
     except Exception as e:
       raise e
+
+
+  #leader_change
+  def on_leader_change(self, data, stat):
+    if data:
+      leader_info = data.decode().split(":")
+      self.discovery_addr, self.discovery_port = leader_info[0], int(leader_info[1])
+      self.logger.info(f"New Discovery Leader: {self.discovery_addr}:{self.discovery_port}")
+      if self.state == self.State.REGISTER or self.state == self.State.ISREADY:
+        self.mw_obj.update_discovery_address(self.discovery_addr, self.discovery_port)
+        self.mw_obj.register(self.name, self.topiclist)
+    else:
+      self.logger.warning("Discovery Leader not available")
 
   ########################################
   # driver program
@@ -199,32 +224,41 @@ class PublisherAppln ():
       # service.
       if (self.state == self.State.REGISTER):
         # send a register msg to discovery service
-        self.logger.debug ("PublisherAppln::invoke_operation - register with the discovery service")
-        self.mw_obj.register (self.name, self.topiclist)
+
+        if self.discovery_addr and self.discovery_port:
+          self.logger.debug("PublisherAppln::invoke_operation - register with the discovery service")
+          self.mw_obj.register (self.name, self.topiclist)
+          self.state = self.State.DISSEMINATE
+          return None
+        else:
+          self.logger.warning("PublisherAppln::invoke_operation - Discovery Leader not found, retrying...")
+          time.sleep(5)
+          return None
 
         # Remember that we were invoked by the event loop as part of the upcall.
         # So we are going to return back to it for its next iteration. Because
         # we have just now sent a register request, the very next thing we expect is
         # to receive a response from remote entity. So we need to set the timeout
         # for the next iteration of the event loop to a large num and so return a None.
-        return None
-      
-      elif (self.state == self.State.ISREADY):
-        # Now keep checking with the discovery service if we are ready to go
-        #
-        # Note that in the previous version of the code, we had a loop. But now instead
-        # of an explicit loop we are going to go back and forth between the event loop
-        # and the upcall until we receive the go ahead from the discovery service.
-        
-        self.logger.debug ("PublisherAppln::invoke_operation - check if are ready to go")
-        self.mw_obj.is_ready ()  # send the is_ready? request
+        # return None
 
-        # Remember that we were invoked by the event loop as part of the upcall.
-        # So we are going to return back to it for its next iteration. Because
-        # we have just now sent a isready request, the very next thing we expect is
-        # to receive a response from remote entity. So we need to set the timeout
-        # for the next iteration of the event loop to a large num and so return a None.
-        return None
+      ## is_ready is now disabled
+      # elif (self.state == self.State.ISREADY):
+      #   # Now keep checking with the discovery service if we are ready to go
+      #   #
+      #   # Note that in the previous version of the code, we had a loop. But now instead
+      #   # of an explicit loop we are going to go back and forth between the event loop
+      #   # and the upcall until we receive the go ahead from the discovery service.
+      #
+      #   self.logger.debug ("PublisherAppln::invoke_operation - check if are ready to go")
+      #   self.mw_obj.is_ready ()  # send the is_ready? request
+      #
+      #   # Remember that we were invoked by the event loop as part of the upcall.
+      #   # So we are going to return back to it for its next iteration. Because
+      #   # we have just now sent a isready request, the very next thing we expect is
+      #   # to receive a response from remote entity. So we need to set the timeout
+      #   # for the next iteration of the event loop to a large num and so return a None.
+      #   return None
       
       elif (self.state == self.State.DISSEMINATE):
 
@@ -254,7 +288,8 @@ class PublisherAppln ():
           time.sleep (1/float (self.frequency))  # ensure we get a floating point num
 
         self.logger.debug ("PublisherAppln::invoke_operation - Dissemination completed")
-
+        self.logger.info("PublisherAppln::invoke_operation - All 5000 samples sent. Deregistering and exiting...")
+        self.mw_obj.deregister(self.name)  # 自动注销
         # we are done. So we move to the completed state
         self.state = self.State.COMPLETED
 
@@ -310,31 +345,31 @@ class PublisherAppln ():
   #
   # Also a part of upcall handled by application logic
   ########################################
-  def isready_response (self, isready_resp):
-    ''' handle isready response '''
-
-    try:
-      self.logger.info ("PublisherAppln::isready_response")
-
-      # Notice how we get that loop effect with the sleep (10)
-      # by an interaction between the event loop and these
-      # upcall methods.
-      if not isready_resp.status:
-        # discovery service is not ready yet
-        self.logger.debug ("PublisherAppln::driver - Not ready yet; check again")
-        time.sleep (10)  # sleep between calls so that we don't make excessive calls
-
-      else:
-        # we got the go ahead
-        # set the state to disseminate
-        self.state = self.State.DISSEMINATE
-        
-      # return timeout of 0 so event loop calls us back in the invoke_operation
-      # method, where we take action based on what state we are in.
-      return 0
-    
-    except Exception as e:
-      raise e
+  # def isready_response (self, isready_resp):
+  #   ''' handle isready response '''
+  #
+  #   try:
+  #     self.logger.info ("PublisherAppln::isready_response")
+  #
+  #     # Notice how we get that loop effect with the sleep (10)
+  #     # by an interaction between the event loop and these
+  #     # upcall methods.
+  #     if not isready_resp.status:
+  #       # discovery service is not ready yet
+  #       self.logger.debug ("PublisherAppln::driver - Not ready yet; check again")
+  #       time.sleep (10)  # sleep between calls so that we don't make excessive calls
+  #
+  #     else:
+  #       # we got the go ahead
+  #       # set the state to disseminate
+  #       self.state = self.State.DISSEMINATE
+  #
+  #     # return timeout of 0 so event loop calls us back in the invoke_operation
+  #     # method, where we take action based on what state we are in.
+  #     return 0
+  #
+  #   except Exception as e:
+  #     raise e
 
   ########################################
   # dump the contents of the object 
@@ -387,10 +422,11 @@ def parseCmdLineArgs ():
 
   parser.add_argument ("-f", "--frequency", type=int,default=1, help="Rate at which topics disseminated: default once a second - use integers")
 
-  parser.add_argument ("-i", "--iters", type=int, default=1000, help="number of publication iterations (default: 1000)")
+  # parser.add_argument ("-i", "--iters", type=int, default=1000, help="number of publication iterations (default: 1000)")
 
   parser.add_argument ("-l", "--loglevel", type=int, default=logging.INFO, choices=[logging.DEBUG,logging.INFO,logging.WARNING,logging.ERROR,logging.CRITICAL], help="logging level, choices 10,20,30,40,50: default 20=logging.INFO")
-  
+
+  parser.add_argument("-z", "--zookeeper", default="127.0.0.1:2181", help="ZooKeeper address")
   return parser.parse_args()
 
 
