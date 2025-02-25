@@ -34,6 +34,7 @@ from CS6381_MW import discovery_pb2
 class PublisherMW:
     def __init__(self, logger):
         self.logger = logger
+        self.zk = None  # ZooKeeper client
         self.req = None  # REQ socket to Discovery service
         self.pub = None  # PUB socket for disseminating messages
         self.poller = None
@@ -42,94 +43,122 @@ class PublisherMW:
         self.upcall_obj = None
         self.handle_events = True
         self.dissemination = None  # "Direct" or "Broker"
-        self.discovery_addr = None
-        self.discovery_port = None
-        self.broker_addr = None
-        self.broker_port = None
+        self.context = None
+        self.primary_discovery = None  # Current primary discovery address
 
-    def configure(self, args):
+    def configure(self, args, zk_client):
         try:
             self.logger.info("PublisherMW::configure")
+
+            # Store ZooKeeper client reference
+            self.zk = zk_client
+
             self.port = args.port
             self.addr = args.addr
-            self.discovery_addr, self.discovery_port = args.discovery.split(":")
 
             config = configparser.ConfigParser()
             config.read(args.config)
             self.dissemination = config["Dissemination"]["Strategy"]
 
-            context = zmq.Context()
+            self.context = zmq.Context()
             self.poller = zmq.Poller()
-            self.req = context.socket(zmq.REQ)
-            self.pub = context.socket(zmq.PUB)
+            self.req = self.context.socket(zmq.REQ)
+            self.pub = self.context.socket(zmq.PUB)
             self.poller.register(self.req, zmq.POLLIN)
 
             # connect_str = "tcp://" + args.discovery
             # self.req.connect(connect_str)
-            self.connect_to_discovery()
 
             bind_string = "tcp://*:" + str(self.port)
             self.pub.bind(bind_string)
+
+            self.setup_discovery_watch()
             self.logger.info("PublisherMW::configure completed")
         except Exception as e:
             self.logger.error(f"PublisherMW::configure error: {e}")
             raise e
 
-    def connect_to_discovery(self):
-        """Connect to the Discovery service."""
-        if self.discovery_addr and self.discovery_port:
-            connect_str = f"tcp://{self.discovery_addr}:{self.discovery_port}"
-            self.req.connect(connect_str)
-            self.logger.info(f"Connected to Discovery at {connect_str}")
+    def setup_discovery_watch(self):
+        """Watch for discovery primary changes in ZooKeeper"""
 
-    def update_discovery_address(self, addr, port):
-        """Update the Discovery service address."""
-        self.logger.info(f"New Discovery Address: {addr}:{port}")
-        self.discovery_addr = addr
-        self.discovery_port = port
-        self.req.close()
-        context = zmq.Context()
-        self.req = context.socket(zmq.REQ)
-        self.poller.register(self.req, zmq.POLLIN)
-        self.connect_to_discovery()
+        @self.zk.DataWatch("/discovery/primary")
+        def watch_primary(data, stat):
+            if data:
+                new_primary = data.decode()
+                self.logger.info(f"Discovery primary changed to {new_primary}")
+                self.update_discovery_connection(new_primary)
+
+    def update_discovery_connection(self, new_primary):
+        """Update connection to new discovery primary"""
+        try:
+            # Disconnect old socket
+            if self.primary_discovery:
+                old_conn_str = f"tcp://{self.primary_discovery}"
+                self.req.disconnect(old_conn_str)
+
+            # Connect to new primary
+            self.primary_discovery = new_primary
+            new_conn_str = f"tcp://{self.primary_discovery}"
+            self.req.connect(new_conn_str)
+            self.logger.info(f"Connected to discovery service at {new_conn_str}")
+
+        except zmq.ZMQError as e:
+            self.logger.error(f"Connection update failed: {e}")
+            raise
 
     def event_loop(self, timeout=1000):
         try:
             self.logger.info("PublisherMW::event_loop - starting event loop")
             while self.handle_events:
-                if timeout is None:
-                    timeout = 1000
                 events = dict(self.poller.poll(timeout=timeout))
-                if not events:
-                    timeout = self.upcall_obj.invoke_operation()
-                    if timeout is None:
-                        timeout = 1000
-                elif self.req in events:
-                    timeout = self.handle_reply()
-                    if timeout is None:
-                        timeout = 1000
+                if self.req in events:
+                    self.handle_discovery_response()
                 else:
-                    raise Exception("Unknown event in PublisherMW::event_loop")
+                    # Handle timeout by invoking upcall
+                    if self.upcall_obj:
+                        new_timeout = self.upcall_obj.invoke_operation()
+                        timeout = new_timeout if new_timeout is not None else 1000
+
             self.logger.info("PublisherMW::event_loop - exiting event loop")
         except Exception as e:
             self.logger.error(f"PublisherMW::event_loop error: {e}")
             raise e
+        finally:
+            self.cleanup()
 
-    def handle_reply(self):
+    def handle_discovery_response(self):
+        """Process responses from Discovery service"""
         try:
-            self.logger.info("PublisherMW::handle_reply")
-            bytes_rcvd = self.req.recv()
+            self.logger.info("PublisherMW::handle_discovery_reply")
+            response = self.req.recv()
             disc_resp = discovery_pb2.DiscoveryResp()
-            disc_resp.ParseFromString(bytes_rcvd)
+            disc_resp.ParseFromString(response)
+
             if disc_resp.msg_type == discovery_pb2.TYPE_REGISTER:
-                return self.upcall_obj.register_response(disc_resp.register_resp)
-            elif disc_resp.msg_type == discovery_pb2.TYPE_ISREADY:
-                return self.upcall_obj.isready_response(disc_resp.isready_resp)
+                self.logger.debug("Received registration response")
+                self.upcall_obj.register_response(disc_resp.register_resp)
             else:
-                raise ValueError("Unrecognized response message in PublisherMW")
+                self.logger.warning(f"Unexpected message type: {disc_resp.msg_type}")
+
         except Exception as e:
-            self.logger.error(f"PublisherMW::handle_reply error: {e}")
-            raise e
+            self.logger.error(f"Response handling failed: {e}")
+            raise
+
+    # def handle_reply(self):
+    #     try:
+    #         self.logger.info("PublisherMW::handle_reply")
+    #         bytes_rcvd = self.req.recv()
+    #         disc_resp = discovery_pb2.DiscoveryResp()
+    #         disc_resp.ParseFromString(bytes_rcvd)
+    #         if disc_resp.msg_type == discovery_pb2.TYPE_REGISTER:
+    #             return self.upcall_obj.register_response(disc_resp.register_resp)
+    #         elif disc_resp.msg_type == discovery_pb2.TYPE_ISREADY:
+    #             return self.upcall_obj.isready_response(disc_resp.isready_resp)
+    #         else:
+    #             raise ValueError("Unrecognized response message in PublisherMW")
+    #     except Exception as e:
+    #         self.logger.error(f"PublisherMW::handle_reply error: {e}")
+    #         raise e
 
     def register(self, name, topiclist):
         try:
@@ -153,25 +182,6 @@ class PublisherMW:
             self.req.send(buf2send)
         except Exception as e:
             self.logger.error(f"PublisherMW::register error: {e}")
-            raise e
-
-    def deregister(self, name):
-        """向 Discovery 发送注销请求"""
-        try:
-            self.logger.info("PublisherMW::deregister")
-            dereg_req = discovery_pb2.DeregisterReq()
-            dereg_req.role = discovery_pb2.ROLE_PUBLISHER
-            dereg_req.id = name
-
-            disc_req = discovery_pb2.DiscoveryReq()
-            disc_req.msg_type = discovery_pb2.TYPE_DEREGISTER
-            disc_req.deregister_req.CopyFrom(dereg_req)
-
-            buf2send = disc_req.SerializeToString()
-            self.req.send(buf2send)
-            self.logger.info("Publisher successfully deregistered.")
-        except Exception as e:
-            self.logger.error(f"PublisherMW::deregister error: {e}")
             raise e
 
     # def is_ready(self):
@@ -204,3 +214,25 @@ class PublisherMW:
 
     def disable_event_loop(self):
         self.handle_events = False
+
+    def cleanup(self):
+        """Resource cleanup"""
+        self.logger.info("Cleaning up resources")
+        try:
+            self.pub.close()
+            self.req.close()
+            self.context.term()
+            if self.zk:
+                self.zk.stop()
+                self.zk.close()
+        except Exception as e:
+            self.logger.warning(f"Cleanup error: {e}")
+
+    def get_primary_discovery(self, zk_client):
+        """Retrieve current primary discovery node"""
+        try:
+            if zk_client.exists("/discovery/primary"):
+                data, _ = zk_client.get("/discovery/primary")
+                return data.decode()
+        except Exception:
+            self.logger.warning("Discovery node not found")
