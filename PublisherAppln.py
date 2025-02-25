@@ -61,7 +61,10 @@ from CS6381_MW import discovery_pb2
 
 # import any other packages you need.
 from enum import Enum  # for an enumeration we are using to describe what state we are in
+import json
 from kazoo.client import KazooClient
+from kazoo.exceptions import NoNodeError, ConnectionClosedError
+
 ##################################
 #       PublisherAppln class
 ##################################
@@ -74,9 +77,9 @@ class PublisherAppln ():
     INITIALIZE = 0,
     CONFIGURE = 1,
     REGISTER = 2,
-    ISREADY = 3,
-    DISSEMINATE = 4,
-    COMPLETED = 5
+    # ISREADY = 3,
+    DISSEMINATE = 3,
+    COMPLETED = 4
 
   ########################################
   # constructor
@@ -92,12 +95,9 @@ class PublisherAppln ():
     self.dissemination = None # direct or via broker
     self.mw_obj = None # handle to the underlying Middleware object
     self.logger = logger  # internal logger for print statements
+    self.zk_hosts = None
+    self.zk = None  # ZooKeeper client
 
-    self.zk = None
-    self.zk_host = None
-    self.discovery_addr = None
-    self.discovery_port = None
-    self.iters=5000
   ########################################
   # configure/initialize
   ########################################
@@ -121,15 +121,14 @@ class PublisherAppln ():
       self.logger.debug ("PublisherAppln::configure - parsing config.ini")
       config = configparser.ConfigParser ()
       config.read (args.config)
-      self.lookup = config["Discovery"]["Strategy"]
+      self.lookup = config["Discovery"]["Strategy"] #flag
       self.dissemination = config["Dissemination"]["Strategy"]
+      self.zk_hosts = config["ZooKeeper"]["Hosts"]
 
-      #kazoo initialization
-
-      self.zk_host = config["ZooKeeper"]["Host"]
-      self.zk = KazooClient(hosts=self.zk_host)
-      self.zk.start()
-      self.zk.DataWatch("/cs6381/discovery/leader", self.on_leader_change)
+      # Initialize ZooKeeper connection
+      self.zk = KazooClient(hosts=self.zk_hosts)
+      self.zk.start(timeout=15)
+      self.logger.debug("Connected to ZooKeeper at %s", self.zk_hosts)
     
       # Now get our topic list of interest
       ts = TopicSelector()
@@ -141,25 +140,16 @@ class PublisherAppln ():
       # everything
       self.logger.debug ("PublisherAppln::configure - initialize the middleware object")
       self.mw_obj = PublisherMW (self.logger)
-      self.mw_obj.configure (args) # pass remainder of the args to the m/w object
+      self.mw_obj.configure (args, self.zk) # pass remainder of the args to the m/w object
       
       self.logger.info ("PublisherAppln::configure - configuration complete")
-      
+
+    except ConnectionClosedError as e:
+      self.logger.error("ZooKeeper connection failed: %s", e)
+      raise
+
     except Exception as e:
       raise e
-
-
-  #leader_change
-  def on_leader_change(self, data, stat):
-    if data:
-      leader_info = data.decode().split(":")
-      self.discovery_addr, self.discovery_port = leader_info[0], int(leader_info[1])
-      self.logger.info(f"New Discovery Leader: {self.discovery_addr}:{self.discovery_port}")
-      if self.state == self.State.REGISTER or self.state == self.State.ISREADY:
-        self.mw_obj.update_discovery_address(self.discovery_addr, self.discovery_port)
-        self.mw_obj.register(self.name, self.topiclist)
-    else:
-      self.logger.warning("Discovery Leader not available")
 
   ########################################
   # driver program
@@ -178,8 +168,19 @@ class PublisherAppln ():
       # middleware will keep track of it and any time something must
       # be handled by the application level, invoke an upcall.
       self.logger.debug ("PublisherAppln::driver - upcall handle")
-      self.mw_obj.set_upcall_handle (self)
 
+
+      # Register ephemeral node in ZooKeeper
+      self.zk.create(f"/publishers/{self.name}",
+                     value=json.dumps({
+                       "address": self.mw_obj.addr,
+                       "port": self.mw_obj.port,
+                       "topics": self.topiclist
+                     }).encode(),
+                     ephemeral=True,
+                     makepath=True)
+
+      self.mw_obj.set_upcall_handle(self)
       # the next thing we should be doing is to register with the discovery
       # service. But because we are simply delegating everything to an event loop
       # that will call us back, we will need to know when we get called back as to
@@ -201,9 +202,12 @@ class PublisherAppln ():
       self.mw_obj.event_loop (timeout=0)  # start the event loop
       
       self.logger.info ("PublisherAppln::driver completed")
-      
+
+    except NoNodeError as e:
+      self.logger.error("PublisherAppln::ZooKeeper node creation failed: %s", e)
     except Exception as e:
-      raise e
+      self.logger.error("PublisherAppln::Driver execution failed: %s", e)
+      raise
 
   ########################################
   # generic invoke method called as part of upcall
@@ -224,25 +228,16 @@ class PublisherAppln ():
       # service.
       if (self.state == self.State.REGISTER):
         # send a register msg to discovery service
-
-        if self.discovery_addr and self.discovery_port:
-          self.logger.debug("PublisherAppln::invoke_operation - register with the discovery service")
-          self.mw_obj.register (self.name, self.topiclist)
-          self.state = self.State.DISSEMINATE
-          return None
-        else:
-          self.logger.warning("PublisherAppln::invoke_operation - Discovery Leader not found, retrying...")
-          time.sleep(5)
-          return None
+        self.logger.debug ("PublisherAppln::invoke_operation - register with the discovery service")
+        self.mw_obj.register (self.name, self.topiclist)
 
         # Remember that we were invoked by the event loop as part of the upcall.
         # So we are going to return back to it for its next iteration. Because
         # we have just now sent a register request, the very next thing we expect is
         # to receive a response from remote entity. So we need to set the timeout
         # for the next iteration of the event loop to a large num and so return a None.
-        # return None
-
-      ## is_ready is now disabled
+        return None
+      
       # elif (self.state == self.State.ISREADY):
       #   # Now keep checking with the discovery service if we are ready to go
       #   #
@@ -288,8 +283,7 @@ class PublisherAppln ():
           time.sleep (1/float (self.frequency))  # ensure we get a floating point num
 
         self.logger.debug ("PublisherAppln::invoke_operation - Dissemination completed")
-        self.logger.info("PublisherAppln::invoke_operation - All 5000 samples sent. Deregistering and exiting...")
-        self.mw_obj.deregister(self.name)  # 自动注销
+
         # we are done. So we move to the completed state
         self.state = self.State.COMPLETED
 
@@ -301,6 +295,8 @@ class PublisherAppln ():
         # we are done. Time to break the event loop. So we created this special method on the
         # middleware object to kill its event loop
         self.mw_obj.disable_event_loop ()
+        self.zk.stop()
+        self.zk.close()
         return None
 
       else:
@@ -327,14 +323,14 @@ class PublisherAppln ():
         self.logger.debug ("PublisherAppln::register_response - registration is a success")
 
         # set our next state to isready so that we can then send the isready message right away
-        self.state = self.State.ISREADY
+        self.state = self.State.DISSEMINATE
         
         # return a timeout of zero so that the event loop in its next iteration will immediately make
         # an upcall to us
         return 0
       
       else:
-        self.logger.debug ("PublisherAppln::register_response - registration is a failure with reason {}".format (response.reason))
+        self.logger.debug ("PublisherAppln::register_response - registration is a failure with reason {}".format (reg_resp.reason))
         raise ValueError ("Publisher needs to have unique id")
 
     except Exception as e:
@@ -388,6 +384,7 @@ class PublisherAppln ():
       self.logger.info ("     TopicList: {}".format (self.topiclist))
       self.logger.info ("     Iterations: {}".format (self.iters))
       self.logger.info ("     Frequency: {}".format (self.frequency))
+      self.logger.info ("     ZooKeeper: {}".format(self.zk_hosts))
       self.logger.info ("**********************************")
 
     except Exception as e:
@@ -414,7 +411,7 @@ def parseCmdLineArgs ():
 
   parser.add_argument ("-p", "--port", type=int, default=5577, help="Port number on which our underlying publisher ZMQ service runs, default=5577")
     
-  parser.add_argument ("-d", "--discovery", default="localhost:5555", help="IP Addr:Port combo for the discovery service, default localhost:5555")
+  # parser.add_argument ("-d", "--discovery", default="localhost:5555", help="IP Addr:Port combo for the discovery service, default localhost:5555")
 
   parser.add_argument ("-T", "--num_topics", type=int, choices=range(1,10), default=1, help="Number of topics to publish, currently restricted to max of 9")
 
@@ -422,11 +419,10 @@ def parseCmdLineArgs ():
 
   parser.add_argument ("-f", "--frequency", type=int,default=1, help="Rate at which topics disseminated: default once a second - use integers")
 
-  # parser.add_argument ("-i", "--iters", type=int, default=1000, help="number of publication iterations (default: 1000)")
+  parser.add_argument ("-i", "--iters", type=int, default=1000, help="number of publication iterations (default: 1000)")
 
   parser.add_argument ("-l", "--loglevel", type=int, default=logging.INFO, choices=[logging.DEBUG,logging.INFO,logging.WARNING,logging.ERROR,logging.CRITICAL], help="logging level, choices 10,20,30,40,50: default 20=logging.INFO")
-
-  parser.add_argument("-z", "--zookeeper", default="127.0.0.1:2181", help="ZooKeeper address")
+  
   return parser.parse_args()
 
 
