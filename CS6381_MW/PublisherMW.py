@@ -79,23 +79,34 @@ class PublisherMW:
             raise e
 
     def setup_discovery_watch(self):
-        """Watch for discovery primary changes in ZooKeeper"""
+        """监听 Discovery 主节点的变化"""
 
-        @self.zk.DataWatch("/discovery/leader")
-        def watch_primary(data, stat):
+        def update_primary_discovery(data, stat):
             if data:
                 new_primary = data.decode()
                 self.logger.info(f"Discovery primary changed to {new_primary}")
                 self.update_discovery_connection(new_primary)
 
+        # 立即获取当前 Discovery
+        data, stat = self.zk.get("/discovery/leader", watch=update_primary_discovery)
+        update_primary_discovery(data, stat)  # 直接调用以立即连接
+
     def update_discovery_connection(self, new_primary):
+        """发现新 Leader 并重新注册"""
         try:
             if self.primary_discovery:
                 self.logger.info(f"Disconnecting from old primary: {self.primary_discovery}")
                 self.req.disconnect(f"tcp://{self.primary_discovery}")
+
             self.primary_discovery = new_primary
             self.req.connect(f"tcp://{self.primary_discovery}")
             self.logger.info(f"Connected to new primary: {self.primary_discovery}")
+
+            # 重新注册 Publisher
+            if self.upcall_obj:
+                self.logger.info("Re-registering with new Discovery leader")
+                self.register(self.upcall_obj.name, self.upcall_obj.topiclist)
+
         except Exception as e:
             self.logger.error(f"Failed to update discovery connection: {e}")
             raise
@@ -157,6 +168,7 @@ class PublisherMW:
     def register(self, name, topiclist):
         try:
             self.logger.info("PublisherMW::register")
+
             reg_info = discovery_pb2.RegistrantInfo()
             reg_info.id = name
             reg_info.addr = self.addr
@@ -174,6 +186,23 @@ class PublisherMW:
             buf2send = disc_req.SerializeToString()
             self.logger.debug("PublisherMW::register - sending registration request")
             self.req.send(buf2send)
+
+            #  等待 Discovery 响应，确保 Publisher 进入 DISSEMINATE
+            response = self.req.recv()
+            disc_resp = discovery_pb2.DiscoveryResp()
+            disc_resp.ParseFromString(response)
+
+            if disc_resp.msg_type == discovery_pb2.TYPE_REGISTER:
+                if disc_resp.register_resp.status == discovery_pb2.STATUS_SUCCESS:
+                    self.logger.info("PublisherMW::register - Registration successful, notifying application")
+                    self.upcall_obj.register_response(disc_resp.register_resp)  # 通知应用层
+                else:
+                    self.logger.warning("PublisherMW::register - Registration failed, retrying...")
+                    time.sleep(1)
+                    self.register(name, topiclist)  # 失败后重试
+            else:
+                self.logger.warning("PublisherMW::register - Unexpected response type")
+
         except Exception as e:
             self.logger.error(f"PublisherMW::register error: {e}")
             raise e
