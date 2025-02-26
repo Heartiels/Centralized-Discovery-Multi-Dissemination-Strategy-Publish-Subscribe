@@ -81,7 +81,7 @@ class PublisherMW:
     def setup_discovery_watch(self):
         """Watch for discovery primary changes in ZooKeeper"""
 
-        @self.zk.DataWatch("/discovery/primary")
+        @self.zk.DataWatch("/discovery/leader")
         def watch_primary(data, stat):
             if data:
                 new_primary = data.decode()
@@ -89,21 +89,15 @@ class PublisherMW:
                 self.update_discovery_connection(new_primary)
 
     def update_discovery_connection(self, new_primary):
-        """Update connection to new discovery primary"""
         try:
-            # Disconnect old socket
             if self.primary_discovery:
-                old_conn_str = f"tcp://{self.primary_discovery}"
-                self.req.disconnect(old_conn_str)
-
-            # Connect to new primary
+                self.logger.info(f"Disconnecting from old primary: {self.primary_discovery}")
+                self.req.disconnect(f"tcp://{self.primary_discovery}")
             self.primary_discovery = new_primary
-            new_conn_str = f"tcp://{self.primary_discovery}"
-            self.req.connect(new_conn_str)
-            self.logger.info(f"Connected to discovery service at {new_conn_str}")
-
-        except zmq.ZMQError as e:
-            self.logger.error(f"Connection update failed: {e}")
+            self.req.connect(f"tcp://{self.primary_discovery}")
+            self.logger.info(f"Connected to new primary: {self.primary_discovery}")
+        except Exception as e:
+            self.logger.error(f"Failed to update discovery connection: {e}")
             raise
 
     def event_loop(self, timeout=1000):
@@ -231,8 +225,8 @@ class PublisherMW:
     def get_primary_discovery(self, zk_client):
         """Retrieve current primary discovery node"""
         try:
-            if zk_client.exists("/discovery/primary"):
-                data, _ = zk_client.get("/discovery/primary")
+            if zk_client.exists("/discovery/leader"):
+                data, _ = zk_client.get("/discovery/leader")
                 return data.decode()
         except Exception:
             self.logger.warning("Discovery node not found")

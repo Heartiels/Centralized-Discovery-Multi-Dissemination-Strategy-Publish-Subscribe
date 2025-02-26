@@ -103,12 +103,21 @@ class DiscoveryMW():
             disc_req = discovery_pb2.DiscoveryReq()
             disc_req.ParseFromString(bytes_rcvd)
 
+            if not self.upcall_obj.is_leader:
+                # 构造重定向响应
+                resp = discovery_pb2.DiscoveryResp()
+                resp.msg_type = discovery_pb2.TYPE_FAILURE
+                primary_data, _ = self.upcall_obj.zk.get(self.upcall_obj.primary_path)
+                resp.redirect_addr = primary_data.decode()
+                self.rep.send(resp.SerializeToString())
+                return
+
             # Handle the request based on its message type
             if disc_req.msg_type == discovery_pb2.TYPE_REGISTER:
                 timeout = self.upcall_obj.register_request(disc_req.register_req)
 
-            # elif disc_req.msg_type == discovery_pb2.TYPE_ISREADY:
-            #     timeout = self.upcall_obj.isready_response(disc_req.isready_req)
+            elif disc_req.msg_type == discovery_pb2.TYPE_ISREADY:
+                timeout = self.upcall_obj.isready_response(disc_req.isready_req)
 
             elif disc_req.msg_type == discovery_pb2.TYPE_LOOKUP_ALL_PUBS:
                 timeout = self.upcall_obj.pubslookup_response(disc_req.lookup_req)
