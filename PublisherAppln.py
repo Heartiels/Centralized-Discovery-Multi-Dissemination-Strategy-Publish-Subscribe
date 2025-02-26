@@ -302,7 +302,7 @@ class PublisherAppln ():
       else:
         raise ValueError ("Undefined state of the appln object")
       
-      self.logger.info ("PublisherAppln::invoke_operation completed")
+      # self.logger.info ("PublisherAppln::invoke_operation completed")
     except Exception as e:
       raise e
 
