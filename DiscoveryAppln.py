@@ -1,52 +1,28 @@
 ###############################################
 #
-# Author: Aniruddha Gokhale
-# Vanderbilt University
-#
-# Purpose: Skeleton/Starter code for the Discovery application
-#
-# Created: Spring 2023
+# Author: Modified by [Your Name]
+# Function: Discovery application with ZooKeeper leader election
 #
 ###############################################
 
-
-# This is left as an exercise for the student.  The Discovery service is a server
-# and hence only responds to requests. It should be able to handle the register,
-# is_ready, the different variants of the lookup methods. etc.
-#
-# The key steps for the discovery application are
-# (1) parse command line and configure application level parameters. One
-# of the parameters should be the total number of publishers and subscribers
-# in the system.
-# (2) obtain the discovery middleware object and configure it.
-# (3) since we are a server, we always handle events in an infinite event loop.
-# See publisher code to see how the event loop is written. Accordingly, when a
-# message arrives, the middleware object parses the message and determines
-# what method was invoked and then hands it to the application logic to handle it
-# (4) Some data structure or in-memory database etc will need to be used to save
-# the registrations.
-# (5) When all the publishers and subscribers in the system have registered with us,
-# then we are in a ready state and will respond with a true to is_ready method. Until then
-# it will be false.
 import os
 import sys
 import time
 import argparse
 import configparser
 import logging
-
-from topic_selector import TopicSelector
-
-from CS6381_MW.DiscoveryMW import DiscoveryMW
-
-from CS6381_MW import discovery_pb2
-
-from enum import Enum
-from kazoo.client import KazooClient
-from kazoo.recipe.election import Election
+import threading
 import json
 
-class DiscoveryAppln():
+import kazoo
+from kazoo.client import KazooClient, KazooState
+from kazoo.recipe.election import Election
+
+from CS6381_MW.DiscoveryMW import DiscoveryMW
+from CS6381_MW import discovery_pb2
+
+
+class DiscoveryAppln:
 
     def __init__(self, logger):
         self.pubs = None
@@ -55,261 +31,245 @@ class DiscoveryAppln():
         self.logger = logger
         self.lookup = None
         self.dissemination = None
-        self.hm = {}
-        self.hm2 = {}
+        self.hm = {}  # Publisher topic mapping
+        self.hm2 = {}  # Subscriber topic mapping
         self.cur_pubs = 0
         self.cur_subs = 0
-        self.pubset = set()
+        self.pubset = set()  # Set of publishers
 
         self.broker_addr = None
         self.broker_port = None
 
-        self.zk = None  # ZooKeeper客户端
-        self.is_leader = False  # 是否为主节点
-        self.leader_path = "/discovery/leader"  # 选举路径
+        self.zk = None  # ZooKeeper client
+        self.is_leader = False
+        self.election_node = None  # 当前选举节点路径
+        self.leader_path = "/discovery/leader"  # 存放 leader 的地址
+        self.election_path = "/discovery/election"  # 选举候选者注册目录
+
 
     def configure(self, args):
         ''' Initialize the object '''
-
         try:
             self.logger.info("DiscoveryAppln::configure")
 
-            # initialize our variables
+            # Reduce Kazoo logging level to only show warnings or higher
+            logging.getLogger("kazoo").setLevel(logging.WARNING)
+
+            # Initialize variables
             self.subs = args.subs
             self.pubs = args.pubs
 
-            # Now, get the configuration object
-            self.logger.debug("DiscoveryAppln::configure - parsing config.ini")
+            # Read config
             config = configparser.ConfigParser()
             config.read(args.config)
             self.lookup = config["Discovery"]["Strategy"]
             self.dissemination = config["Dissemination"]["Strategy"]
 
-            # Now setup up our underlying middleware object to which we delegate everything
-            self.logger.debug("DiscoveryAppln::configure - initialize the middleware object")
+            # Middleware setup
             self.mw_obj = DiscoveryMW(self.logger)
-            self.mw_obj.configure(args)  # pass remainder of the args to the m/w object
+            self.mw_obj.configure(args)
 
+            # ZooKeeper setup
             self.zk = KazooClient(hosts=config["ZooKeeper"]["Hosts"])
             self.zk.start()
-            self.zk.ensure_path("/discovery")
 
-            # 参与主节点选举
-            election = Election(self.zk, self.leader_path, identifier=f"{self.mw_obj.addr}:{self.mw_obj.port}")
-            election.run(self.leadership_callback)  # 异步开始选举
+            # Ensure base paths exist
+            self.zk.ensure_path(self.leader_path)
+            self.zk.ensure_path(self.election_path)
 
-            # 监视主节点变化
-            @self.zk.DataWatch(self.leader_path)
-            def watch_leader(data, stat):
-                if data:
-                    self.logger.info(f"New leader elected: {data.decode()}")
-                else:
-                    self.logger.warning("Leader node deleted, re-initiating election")
-
-            self.logger.info("DiscoveryAppln::configure - configuration complete")
+            self.watch_leader()
+            self.start_election()
 
         except Exception as e:
-            raise e
-
-    def leadership_callback(self):
-        """当选为主节点时触发"""
-        try:
-            self.is_leader = True
-            self.logger.info("***** Elected as primary Discovery node *****")
-            # 将自身地址写入主节点信息
-            self.zk.ensure_path("/discovery/leader")
-            self.zk.set("/discovery/leader", f"{self.mw_obj.addr}:{self.mw_obj.port}".encode())
-        except Exception as e:
-            self.logger.error(f"Failed to set leader data: {e}")
+            self.logger.error(f"Exception in configure: {e}", exc_info=True)
             raise
 
+    def watch_leader(self):
+        """监听 leader 变更，每次变更都输出当前 leader 地址"""
+        @self.zk.DataWatch(self.leader_path)
+        def leader_watch(data, stat):
+            if data:
+                leader_addr = data.decode()
+                self.logger.info(f"New leader elected: {leader_addr}")
+            else:
+                self.logger.warning("Leader node deleted. Re-initiating election...")
+                self.start_election()
 
-    def driver(self):
-        ''' Driver program '''
-
+    def start_election(self):
+        """加入选举，使用已有节点进行选举"""
         try:
-            self.logger.info("DiscoveryAppln::driver")
+            self.logger.info("Joining election...")
 
-            # First ask our middleware to keep a handle to us to make upcalls.
-            self.logger.debug("DiscoveryAppln::driver - upcall handle")
-            self.mw_obj.set_upcall_handle(self)
+            if self.election_node:
+                # 检查节点是否仍然存在
+                if self.zk.exists(self.election_node):
+                    self.logger.info(f"Reusing existing election node: {self.election_node}")
+                    self.check_election_status()
+                    return
+                else:
+                    self.logger.warning(f"Election node {self.election_node} no longer exists, recreating...")
 
-            # Start the event loop
-            self.mw_obj.event_loop(timeout=0)  # start the event loop
-
-            self.logger.info("DiscoveryAppln::driver completed")
+            # 没有可用的 election_node，则创建新节点
+            node_value = f"{self.mw_obj.addr}:{self.mw_obj.port}".encode()
+            self.election_node = self.zk.create(
+                self.election_path + "/node_", node_value, ephemeral=True, sequence=True
+            )
+            self.logger.info(f"New election node created: {self.election_node}")
+            self.check_election_status()
 
         except Exception as e:
-            raise e
+            self.logger.error(f"Error in election process: {e}", exc_info=True)
+            raise
+
+    def check_election_status(self):
+        """检查选举状态，确定自己是否成为 leader"""
+        children = self.zk.get_children(self.election_path)
+        children.sort()  # 按照编号排序
+        my_node = self.election_node.split("/")[-1]
+
+        if my_node == children[0]:
+            self.become_leader()
+        else:
+            # 监听比自己小的前一个节点
+            predecessor = children[children.index(my_node) - 1]
+            pred_path = f"{self.election_path}/{predecessor}"
+            self.logger.info(f"Watching previous node: {pred_path}")
+
+            @self.zk.DataWatch(pred_path)
+            def watch_predecessor(data, stat):
+                if data is None:  # 说明前一个节点消失
+                    self.logger.info("Predecessor node gone. Checking election status...")
+                    self.check_election_status()
+
+    def become_leader(self):
+        try:
+            self.is_leader = True
+            node_value = f"{self.mw_obj.addr}:{self.mw_obj.port}".encode()
+
+            # 更新 leader 节点
+            if self.zk.exists(self.leader_path):
+                self.zk.delete(self.leader_path)
+            self.zk.create(self.leader_path, node_value, ephemeral=True)
+
+            self.logger.info("***** Elected as primary Discovery node *****")
+
+            # 重新加载已注册的 Pub/Sub
+            self.reload_registrations()
+
+        except Exception as e:
+            self.logger.error(f"Failed to set leader: {e}", exc_info=True)
+            raise
+
+    def reload_registrations(self):
+        """新 Leader 继承 Publisher 和 Subscriber 的注册信息"""
+        try:
+            if not self.zk.exists("/registrations"):
+                self.logger.info("No previous registrations found in ZooKeeper")
+                return
+
+            # 重新加载 Publishers
+            if self.zk.exists("/registrations/publishers"):
+                pubs = self.zk.get_children("/registrations/publishers")
+                for pub in pubs:
+                    data, _ = self.zk.get(f"/registrations/publishers/{pub}")
+                    pub_info = json.loads(data.decode())
+
+                    # 存储在本地缓存
+                    for topic in pub_info["topics"]:
+                        self.hm.setdefault(topic, []).append(
+                            (pub, pub_info["addr"], pub_info["port"])
+                        )
+                        self.pubset.add((pub, pub_info["addr"], pub_info["port"]))
+
+            # 重新加载 Subscribers
+            if self.zk.exists("/registrations/subscribers"):
+                subs = self.zk.get_children("/registrations/subscribers")
+                for sub in subs:
+                    data, _ = self.zk.get(f"/registrations/subscribers/{sub}")
+                    sub_info = json.loads(data.decode())
+
+                    for topic in sub_info["topics"]:
+                        self.hm2.setdefault(topic, []).append(
+                            (sub, sub_info["addr"], sub_info["port"])
+                        )
+
+            self.logger.info("Successfully reloaded existing registrations")
+
+        except Exception as e:
+            self.logger.error(f"Failed to reload registrations: {e}", exc_info=True)
+
+    def driver(self):
+        ''' 只有主节点才执行事件处理，其他节点等待选举 '''
+        try:
+            self.logger.info("DiscoveryAppln::driver started")
+
+            self.mw_obj.set_upcall_handle(self)
+
+            while not self.is_leader:
+                self.logger.info("Waiting for leader election...")
+                time.sleep(2)  # 让非主节点进入等待状态
+
+            self.logger.info("Starting event loop as leader...")
+            self.mw_obj.event_loop(timeout=0)  # 仅 leader 执行事件处理
+
+        except Exception as e:
+            self.logger.error(f"Exception in driver: {e}", exc_info=True)
+            raise
 
     def register_request(self, register_req):
         try:
             if not self.is_leader:
-                # 非主节点返回重定向响应
+                # 如果不是 Leader，则返回重定向
                 redirect_resp = discovery_pb2.RegisterResp()
                 redirect_resp.status = discovery_pb2.STATUS_FAILURE
-                primary_data, _ = self.zk.get("/discovery/leader")
+                primary_data, _ = self.zk.get(self.leader_path)
                 redirect_resp.redirect_addr = primary_data.decode()
-                # ...发送响应...
+
+                discovery_resp = discovery_pb2.DiscoveryResp()
+                discovery_resp.msg_type = discovery_pb2.TYPE_REGISTER
+                discovery_resp.register_resp.CopyFrom(redirect_resp)
+                self.mw_obj.handle_response(discovery_resp)
                 return
 
-            # 主节点处理逻辑
-            path = f"/discovery/registrants/{register_req.role}/{register_req.info.id}"
+            # 处理 Publisher 注册
+            role_str = "publishers" if register_req.role == discovery_pb2.ROLE_PUBLISHER else "subscribers"
+            path = f"/registrations/{role_str}/{register_req.info.id}"
             data = json.dumps({
                 "addr": register_req.info.addr,
                 "port": register_req.info.port,
                 "topics": list(register_req.topiclist)
             }).encode()
 
-            # 创建临时节点（客户端断开自动删除）
-            self.zk.create(path, data, ephemeral=True, makepath=True)
-            self.logger.info("DiscoveryAppln::register_request started")
-
-
-            if register_req.role == discovery_pb2.ROLE_PUBLISHER:
-                for topic in register_req.topiclist:
-                    self.hm.setdefault(topic, []).append(
-                        (register_req.info.id, register_req.info.addr, register_req.info.port)
-                    )
-                    self.pubset.add((register_req.info.id, register_req.info.addr, register_req.info.port))
-                self.cur_pubs += 1
-                self.logger.info(f"Registered publisher: {register_req.info.id}, Topics: {register_req.topiclist}")
-
-            elif register_req.role == discovery_pb2.ROLE_SUBSCRIBER:
-                for topic in register_req.topiclist:
-                    self.hm2.setdefault(topic, []).append(
-                        (register_req.info.id, register_req.info.addr, register_req.info.port)
-                    )
-                self.cur_subs += 1
-                self.logger.info(f"Registered subscriber: {register_req.info.id}, Topics: {register_req.topiclist}")
-
-            elif register_req.role == discovery_pb2.ROLE_BOTH:
-                self.broker_addr = register_req.info.addr
-                self.broker_port = register_req.info.port
-                self.logger.info(f"Registered broker: {register_req.info.id}, Addr: {self.broker_addr}, Port: {self.broker_port}")
-
+            if self.zk.exists(path):
+                self.zk.set(path, data)  # 如果已经存在，则更新数据
             else:
-                self.logger.error("Invalid role in registration request")
-                return
+                self.zk.create(path, data, ephemeral=True, makepath=True)  # 创建新的临时节点
 
-            # Send response
+            self.logger.info(f"Registered {role_str} node: {path}")
+
+            #
             ready_resp = discovery_pb2.RegisterResp()
-            ready_resp.status = discovery_pb2.STATUS_SUCCESS
+            ready_resp.status = discovery_pb2.STATUS_SUCCESS  # 确保返回 SUCCESS 状态
             discovery_resp = discovery_pb2.DiscoveryResp()
             discovery_resp.msg_type = discovery_pb2.MsgTypes.TYPE_REGISTER
             discovery_resp.register_resp.CopyFrom(ready_resp)
             self.mw_obj.handle_response(discovery_resp)
 
         except Exception as e:
-            self.logger.error(f"Exception in register_request: {e}")
+            self.logger.error(f"Exception in register_request: {e}", exc_info=True)
             raise
-
-    # def isready_response(self, isready_req):
-    #     self.logger.info("DiscoveryAppln::isready_response started")
-    #
-    #     try:
-    #         ready_resp = discovery_pb2.IsReadyResp()
-    #         if self.pubs + self.subs == self.cur_pubs + self.cur_subs:
-    #             if self.dissemination == "Broker" and (not self.broker_addr or not self.broker_port):
-    #                 ready_resp.status = discovery_pb2.STATUS_FAILURE
-    #                 self.logger.info("DiscoveryAppln:: Broker not registered yet")
-    #             else:
-    #                 ready_resp.status = discovery_pb2.STATUS_SUCCESS
-    #                 self.logger.info("DiscoveryAppln:: SUCCESS; DISSEMINATION CAN NOW BEGIN")
-    #         else:
-    #             ready_resp.status = discovery_pb2.STATUS_FAILURE
-    #
-    #         discovery_resp = discovery_pb2.DiscoveryResp()
-    #         discovery_resp.msg_type = discovery_pb2.MsgTypes.TYPE_ISREADY
-    #         discovery_resp.isready_resp.CopyFrom(ready_resp)
-    #         self.mw_obj.handle_response(discovery_resp)
-    #
-    #     except Exception as e:
-    #         self.logger.error(f"Exception in isready_response: {e}")
-    #         raise
-
-    # 新增主节点监视（DiscoveryAppln.py）
-
-    def setup_primary_watch(self):
-        @self.zk.DataWatch("/discovery/primary")
-        def watch_primary(data, stat):
-            if not data and self.is_leader:
-                # 主节点丢失，触发重新选举
-                self.is_leader = False
-                self.logger.warning("Leadership lost, restarting election...")
-
-
-    def lookup_response(self, lookup_req):
-        self.logger.info("DiscoveryAppln::lookup_response started")
-
-        try:
-            lookup_resp = discovery_pb2.LookupPubByTopicResp()
-            if self.dissemination == "Broker":
-                temp = discovery_pb2.RegistrantInfo()
-                temp.id = "Broker"
-                temp.addr = self.broker_addr
-                temp.port = self.broker_port
-                lookup_resp.array.append(temp)
-            else:
-                # for topic in lookup_req.topiclist:
-                #     if topic in self.hm:
-                #         for tup in self.hm[topic]:
-                #             temp = discovery_pb2.RegistrantInfo()
-                #             temp.id = tup[0]
-                #             temp.addr = tup[1]
-                #             temp.port = tup[2]
-                #             lookup_resp.array.append(temp)
-                pubs_path = f"/discovery/registrants/{discovery_pb2.ROLE_PUBLISHER}"
-                if self.zk.exists(pubs_path):
-                    for child in self.zk.get_children(pubs_path):
-                        data, _ = self.zk.get(f"{pubs_path}/{child}")
-                        pub_info = json.loads(data.decode())
-                        if any(topic in pub_info["topics"] for topic in lookup_req.topiclist):
-                            registrant = discovery_pb2.RegistrantInfo(
-                                id=child,
-                                addr=pub_info["addr"],
-                                port=pub_info["port"]
-                            )
-                            lookup_resp.array.append(registrant)
-
-            discovery_resp = discovery_pb2.DiscoveryResp()
-            discovery_resp.msg_type = discovery_pb2.MsgTypes.TYPE_LOOKUP_PUB_BY_TOPIC
-            discovery_resp.lookup_resp.CopyFrom(lookup_resp)
-            self.mw_obj.handle_response(discovery_resp)
-
-        except Exception as e:
-            self.logger.error(f"Exception in lookup_response: {e}")
-            raise
-    def pubslookup_response(self, lookup_req):
-        self.logger.info("DiscoveryAppln::pubslookup_response started")
-        try:
-            lookup_resp = discovery_pb2.LookupPubByTopicResp()
-            for topic, pub_list in self.hm.items():
-                for tup in pub_list:
-                    temp = discovery_pb2.RegistrantInfo()
-                    temp.id = tup[0]
-                    temp.addr = tup[1]
-                    temp.port = tup[2]
-                    lookup_resp.array.append(temp)
-            discovery_resp = discovery_pb2.DiscoveryResp()
-            discovery_resp.msg_type = discovery_pb2.MsgTypes.TYPE_LOOKUP_ALL_PUBS
-            discovery_resp.lookup_resp.CopyFrom(lookup_resp)
-            self.mw_obj.handle_response(discovery_resp)
-        except Exception as e:
-            self.logger.error(f"Exception in pubslookup_response: {e}")
-            raise e
 
 
 def parseCmdLineArgs():
     parser = argparse.ArgumentParser(description="Discovery Application")
-
     parser.add_argument("-P", "--pubs", type=int, default=1, help="total number of publishers in the system")
     parser.add_argument("-S", "--subs", type=int, default=1, help="total number of subscribers in the system")
-    parser.add_argument("-c", "--config", default="config.ini", help="configuration file (default: config.ini)")
-    parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, choices=[logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL], help="logging level")
-    parser.add_argument("-p", "--port", type=int, default=5555, help="Port number on which the Discovery service runs (default: 5555)")
-
+    parser.add_argument("-c", "--config", default="config.ini", help="configuration file")
+    parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, choices=[
+        logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL], help="logging level")
+    parser.add_argument("-p", "--port", type=int, default=5555, help="Port number on which the Discovery service runs")
     return parser.parse_args()
+
 
 def main():
     try:
@@ -324,7 +284,8 @@ def main():
         disc_app.driver()
 
     except Exception as e:
-        logger.error(f"Exception in main: {e}")
+        logger.error(f"Exception in main: {e}", exc_info=True)
+
 
 if __name__ == "__main__":
     main()
