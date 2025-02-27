@@ -114,6 +114,9 @@ Start Subscribers:
 python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f latency.json
 python3 SubscriberAppln.py -n sub2 -a localhost -p 5561 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f late
 
+#After applying zookeeper:
+python3 PublisherAppln.py -n pub1 -a localhost -p 5577 -T 3 -f 1 -i 100 -c config.ini -l 10
+
 ---
 
 ## 6. Demonstration Video
