@@ -173,7 +173,8 @@ class DiscoveryAppln:
                 for pub in pubs:
                     data, _ = self.zk.get(f"/registrations/publishers/{pub}")
                     pub_info = json.loads(data.decode())
-
+                    if not pub_info:
+                        continue
                     # 存储在本地缓存
                     for topic in pub_info["topics"]:
                         self.hm.setdefault(topic, []).append(
@@ -187,7 +188,8 @@ class DiscoveryAppln:
                 for sub in subs:
                     data, _ = self.zk.get(f"/registrations/subscribers/{sub}")
                     sub_info = json.loads(data.decode())
-
+                    if not sub_info:
+                        continue
                     for topic in sub_info["topics"]:
                         self.hm2.setdefault(topic, []).append(
                             (sub, sub_info["addr"], sub_info["port"])
@@ -231,7 +233,11 @@ class DiscoveryAppln:
                 self.mw_obj.handle_response(discovery_resp)
                 return
 
-            # 处理 Publisher 注册
+            # 处理注册
+            self.logger.info(
+                f"Received registration request from {register_req.info.addr}:{register_req.info.port} "
+                f"for topics {register_req.topiclist}"
+            )
             role_str = "publishers" if register_req.role == discovery_pb2.ROLE_PUBLISHER else "subscribers"
             path = f"/registrations/{role_str}/{register_req.info.id}"
             data = json.dumps({
@@ -247,7 +253,7 @@ class DiscoveryAppln:
 
             self.logger.info(f"Registered {role_str} node: {path}")
 
-            #
+
             ready_resp = discovery_pb2.RegisterResp()
             ready_resp.status = discovery_pb2.STATUS_SUCCESS  # 确保返回 SUCCESS 状态
             discovery_resp = discovery_pb2.DiscoveryResp()

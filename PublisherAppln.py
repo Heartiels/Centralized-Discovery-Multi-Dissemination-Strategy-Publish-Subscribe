@@ -124,11 +124,6 @@ class PublisherAppln:
 
             self.mw_obj.set_upcall_handle(self)
 
-            # 等待 Discovery 确认 ready（避免 state 错误）
-            while not self.check_discovery_ready():
-                self.logger.info("Waiting for Discovery to become ready...")
-                time.sleep(2)
-
             self.state = self.State.REGISTER
             self.mw_obj.event_loop(timeout=0)
 
