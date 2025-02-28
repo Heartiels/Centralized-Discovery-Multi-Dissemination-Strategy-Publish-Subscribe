@@ -81,15 +81,18 @@ class PublisherMW:
     def setup_discovery_watch(self):
         """监听 Discovery 主节点的变化"""
 
-        def update_primary_discovery(data, stat):
+        def update_primary_discovery(data, event=None):
+            """ 当 ZooKeeper 发现 /discovery/leader 发生变化时更新 """
             if data:
-                new_primary = data.decode()
+                new_primary = data.decode() if isinstance(data, bytes) else data
                 self.logger.info(f"Discovery primary changed to {new_primary}")
                 self.update_discovery_connection(new_primary)
+            else:
+                self.logger.warning("Leader node is empty. Waiting for a new leader...")
 
         # 立即获取当前 Discovery
-        data, stat = self.zk.get("/discovery/leader", watch=update_primary_discovery)
-        update_primary_discovery(data, stat)  # 直接调用以立即连接
+        self.logger.info("Setting up DataWatch for /discovery/leader")
+        self.zk.DataWatch("/discovery/leader", update_primary_discovery)
 
     def update_discovery_connection(self, new_primary):
         """发现新 Leader 并重新注册"""
@@ -105,20 +108,16 @@ class PublisherMW:
             discovery_host, discovery_port = new_primary.split(":")
             discovery_addr = f"tcp://{discovery_host}:{discovery_port}"
 
-            self.logger.info(f"Connecting to new primary Discovery")
-
-
+            self.logger.info(f"Connecting to new primary Discovery: {discovery_addr}")
             self.req.connect(discovery_addr)
-            self.logger.info(f"Connected to Discovery at tcp://{discovery_host}:{discovery_port}")
 
             # 重新注册 Publisher
             if self.upcall_obj:
-                self.logger.info("Registering with new Discovery leader")
+                self.logger.info("Re-registering with new Discovery leader")
                 self.register(self.upcall_obj.name, self.upcall_obj.topiclist)
-                self.logger.info("Register success")
+
         except Exception as e:
-            self.logger.error(f"Failed to update discovery connection: {e}")
-            raise
+            self.logger.error(f"Failed to update discovery connection: {e}", exc_info=True)
 
     def event_loop(self, timeout=1000):
         try:
