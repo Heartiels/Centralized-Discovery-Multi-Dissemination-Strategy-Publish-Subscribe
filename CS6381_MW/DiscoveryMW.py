@@ -90,7 +90,11 @@ class DiscoveryMW():
 
             # elif disc_req.msg_type == discovery_pb2.TYPE_ISREADY:
             #     timeout = self.upcall_obj.isready_response(disc_req.isready_req)
+            elif disc_req.msg_type == discovery_pb2.TYPE_LOOKUP_ALL_PUBS:
+                timeout = self.upcall_obj.pubslookup_response(disc_req.lookup_req)
 
+            elif disc_req.msg_type == discovery_pb2.TYPE_LOOKUP_PUB_BY_TOPIC:
+                timeout = self.upcall_obj.lookup_response(disc_req.lookup_req)
             else:
                 self.logger.error("Unrecognized message type received")
                 raise Exception("Unrecognized response message")
@@ -102,9 +106,16 @@ class DiscoveryMW():
             raise
 
     def handle_response(self, resp):
+        self.logger.debug("handling response")
         try:
             buf_to_send = resp.SerializeToString()
-            self.rep.send(buf_to_send)
+            self.logger.debug(f"Serialized response: {buf_to_send}")
+
+            # ZeroMQ 可能在 `send()` 时阻塞，因此增加异常处理
+            self.rep.send(buf_to_send, zmq.NOBLOCK)
+            self.logger.debug("Response sent successfully")
+        except zmq.error.Again:
+            self.logger.error("Failed to send response due to zmq.Again (socket not ready)")
         except Exception as e:
             self.logger.error(f"Exception in handle_response: {e}", exc_info=True)
             raise
