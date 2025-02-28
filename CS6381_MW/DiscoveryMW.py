@@ -28,7 +28,7 @@ class DiscoveryMW():
             self.logger.info("DiscoveryMW::configure")
 
             self.port = args.port
-            self.addr = "10.0.0.1"
+            self.addr = "127.0.0.1"
 
             context = zmq.Context()
             self.poller = zmq.Poller()
@@ -36,6 +36,7 @@ class DiscoveryMW():
             self.rep = context.socket(zmq.REP)
             bind_string = f"tcp://*:{self.port}"
             self.rep.bind(bind_string)
+            self.logger.info(f"DiscoveryMW binding to tcp://*:{self.port}")
 
             self.poller.register(self.rep, zmq.POLLIN)
             self.logger.info("DiscoveryMW::configure completed")
@@ -64,6 +65,7 @@ class DiscoveryMW():
             self.logger.debug("DiscoveryMW::handle_request")
 
             bytes_rcvd = self.rep.recv()
+            self.logger.debug(f"DiscoveryMW::handle_request - Received {len(bytes_rcvd)} bytes")
             disc_req = discovery_pb2.DiscoveryReq()
             disc_req.ParseFromString(bytes_rcvd)
 
@@ -79,15 +81,15 @@ class DiscoveryMW():
             # Handle the request
             if disc_req.msg_type == discovery_pb2.TYPE_REGISTER:
                 timeout = self.upcall_obj.register_request(disc_req.register_req)
+                # register_resp = discovery_pb2.RegisterResp()
+                # register_resp.status = discovery_pb2.STATUS_SUCCESS
+                # discovery_resp = discovery_pb2.DiscoveryResp()
+                # discovery_resp.msg_type = discovery_pb2.TYPE_REGISTER
+                # discovery_resp.register_resp.CopyFrom(register_resp)
+                # self.rep.send(discovery_resp.SerializeToString())
 
-            elif disc_req.msg_type == discovery_pb2.TYPE_ISREADY:
-                timeout = self.upcall_obj.isready_response(disc_req.isready_req)
-
-            elif disc_req.msg_type == discovery_pb2.TYPE_LOOKUP_ALL_PUBS:
-                timeout = self.upcall_obj.pubslookup_response(disc_req.lookup_req)
-
-            elif disc_req.msg_type == discovery_pb2.TYPE_LOOKUP_PUB_BY_TOPIC:
-                timeout = self.upcall_obj.lookup_response(disc_req.lookup_req)
+            # elif disc_req.msg_type == discovery_pb2.TYPE_ISREADY:
+            #     timeout = self.upcall_obj.isready_response(disc_req.isready_req)
 
             else:
                 self.logger.error("Unrecognized message type received")

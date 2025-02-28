@@ -94,19 +94,28 @@ class PublisherMW:
     def update_discovery_connection(self, new_primary):
         """发现新 Leader 并重新注册"""
         try:
+            if self.primary_discovery == new_primary:
+                return  # 避免重复连接
+
             if self.primary_discovery:
                 self.logger.info(f"Disconnecting from old primary: {self.primary_discovery}")
                 self.req.disconnect(f"tcp://{self.primary_discovery}")
 
             self.primary_discovery = new_primary
-            self.req.connect(f"tcp://{self.primary_discovery}")
-            self.logger.info(f"Connected to new primary: {self.primary_discovery}")
+            discovery_host, discovery_port = new_primary.split(":")
+            discovery_addr = f"tcp://{discovery_host}:{discovery_port}"
+
+            self.logger.info(f"Connecting to new primary Discovery")
+
+
+            self.req.connect(discovery_addr)
+            self.logger.info(f"Connected to Discovery at tcp://{discovery_host}:{discovery_port}")
 
             # 重新注册 Publisher
             if self.upcall_obj:
-                self.logger.info("Re-registering with new Discovery leader")
+                self.logger.info("Registering with new Discovery leader")
                 self.register(self.upcall_obj.name, self.upcall_obj.topiclist)
-
+                self.logger.info("Register success")
         except Exception as e:
             self.logger.error(f"Failed to update discovery connection: {e}")
             raise
@@ -186,11 +195,13 @@ class PublisherMW:
             buf2send = disc_req.SerializeToString()
             self.logger.debug("PublisherMW::register - sending registration request")
             self.req.send(buf2send)
+            self.logger.debug(f"PublisherMW::register - Sent registration request: {buf2send}")
 
-            #  等待 Discovery 响应，确保 Publisher 进入 DISSEMINATE
+            # 等待 Discovery 响应，确保 Publisher 进入 DISSEMINATE
             response = self.req.recv()
             disc_resp = discovery_pb2.DiscoveryResp()
             disc_resp.ParseFromString(response)
+            self.logger.debug(f"PublisherMW::register: receiving{response}")
 
             if disc_resp.msg_type == discovery_pb2.TYPE_REGISTER:
                 if disc_resp.register_resp.status == discovery_pb2.STATUS_SUCCESS:
