@@ -37,7 +37,10 @@ import zmq
 from topic_selector import TopicSelector
 from CS6381_MW.SubscriberMW import SubscriberMW
 from CS6381_MW import discovery_pb2
+
+import json
 from kazoo.client import KazooClient
+from kazoo.exceptions import NoNodeError, ConnectionClosedError
 
 
 class SubscriberAppln:
@@ -45,6 +48,7 @@ class SubscriberAppln:
         INITIALIZE = 0
         CONFIGURE = 1
         REGISTER = 2
+        # ISREADY = 3
         LOOKUP = 3
         ACCEPT = 4
 
@@ -57,10 +61,9 @@ class SubscriberAppln:
         self.dissemination = None
         self.mw_obj = None
         self.logger = logger
-        self.zk = None
-        self.zk_host = None
-        self.discovery_addr = None
-        self.discovery_port = None
+
+        self.zk = None  # 保存 ZooKeeper 客户端
+        self.zk_hosts = None  # ZooKeeper 服务器地址
 
     def configure(self, args):
         """Initialize the middleware object."""
@@ -68,7 +71,6 @@ class SubscriberAppln:
             self.logger.debug("SubscriberAppln::configure")
             self.name = args.name
             self.num_topics = args.num_topics
-            self.zk_host = args.zookeeper
 
             # Parse configuration file
             self.logger.debug("SubscriberAppln::configure - parsing config.ini")
@@ -77,39 +79,26 @@ class SubscriberAppln:
             self.lookup = config["Discovery"]["Strategy"]
             self.dissemination = config["Dissemination"]["Strategy"]
 
+            # 读取 ZooKeeper 地址，并创建客户端
+            self.zk_hosts = config["ZooKeeper"]["Hosts"]
+            self.zk = KazooClient(hosts=self.zk_hosts)
+            self.zk.start(timeout=15)
+            self.logger.info(f"Connected to ZooKeeper at {self.zk_hosts}")
+
             # Get topic list
             ts = TopicSelector()
             self.topiclist = ts.interest(self.num_topics)
             self.logger.info(f"SubscriberAppln::configure - selected topics: {self.topiclist}")
 
-            # Initialize ZooKeeper
-            self.zk = KazooClient(hosts=self.zk_host)
-            self.zk.start()
-            self.zk.DataWatch("/cs6381/discovery/leader", self.on_leader_change)
-
             # Initialize middleware
             self.logger.debug("SubscriberAppln::configure - initializing middleware object")
             self.mw_obj = SubscriberMW(self.logger)
-            self.mw_obj.configure(args)
+            self.mw_obj.configure(args, self.zk)
 
             self.logger.info("SubscriberAppln::configure - configuration complete")
         except Exception as e:
             self.logger.error(f"Error in configure: {e}")
             raise e
-
-    def on_leader_change(self, data, stat):
-        """当 Discovery Leader 发生变化时更新地址"""
-        if data:
-            leader_info = data.decode().split(":")
-            self.discovery_addr, self.discovery_port = leader_info[0], int(leader_info[1])
-            self.logger.info(f"New Discovery Leader: {self.discovery_addr}:{self.discovery_port}")
-            self.mw_obj.update_discovery_address(self.discovery_addr, self.discovery_port)
-            if self.state == self.State.REGISTER:
-                self.mw_obj.register(self.name, self.topiclist)
-            elif self.state == self.State.LOOKUP:
-                self.mw_obj.plz_lookup(self.topiclist)
-        else:
-            self.logger.warning("Discovery Leader not available")
 
     def driver(self):
         """Driver program."""
@@ -118,8 +107,15 @@ class SubscriberAppln:
             self.dump()
             self.logger.debug("SubscriberAppln::driver - setting up upcall handle")
             self.mw_obj.set_upcall_handle(self)
+
+            # 设置对 Discovery Leader 的监控（调用 mw_obj 中新添加的方法）
+            self.mw_obj.setup_discovery_watch()
+            while self.mw_obj.primary_discovery is None:
+                self.logger.info("Waiting for Discovery leader election...")
+                time.sleep(2)
+            self.logger.info(f"Connected to Discovery leader: {self.mw_obj.primary_discovery}")
+
             self.state = self.State.REGISTER
-            self.mw_obj.register(self.name, self.topiclist)
             self.mw_obj.event_loop()
             self.logger.info("SubscriberAppln::driver completed")
         except Exception as e:
@@ -152,13 +148,12 @@ class SubscriberAppln:
             raise e
 
     def register_response(self, register_resp):
-        """处理注册响应"""
+        """Handle register response."""
         try:
             self.logger.info("SubscriberAppln::register_response")
             if register_resp.status == discovery_pb2.STATUS_SUCCESS:
                 self.logger.debug("SubscriberAppln::register_response - registration successful")
                 self.state = self.State.LOOKUP
-                self.mw_obj.plz_lookup(self.topiclist)
                 return 0
             else:
                 self.logger.error(f"Registration failed: {register_resp.reason}")
@@ -194,7 +189,6 @@ class SubscriberAppln:
             self.logger.error(f"Error in lookup_response: {e}")
             raise e
 
-
     def dump(self):
         """Dump application state."""
         try:
@@ -223,7 +217,6 @@ def parseCmdLineArgs():
     parser.add_argument("-f", "--filename", default="latency.json", help="Filename for logging latency metrics")
     parser.add_argument("-c", "--config", default="config.ini", help="Configuration file")
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, help="Logging level")
-    parser.add_argument("-z", "--zookeeper", default="127.0.0.1:2181", help="ZooKeeper address")
     return parser.parse_args()
 
 

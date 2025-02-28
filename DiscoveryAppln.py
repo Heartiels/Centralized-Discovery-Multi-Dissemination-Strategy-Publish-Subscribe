@@ -252,7 +252,27 @@ class DiscoveryAppln:
                 self.zk.create(path, data, ephemeral=True, makepath=True)  # 创建新的临时节点
 
             self.logger.info(f"Registered {role_str} node: {path}")
+            if register_req.role == discovery_pb2.ROLE_PUBLISHER:
+                for topic in register_req.topiclist:
+                    self.hm.setdefault(topic, []).append(
+                        (register_req.info.id, register_req.info.addr, register_req.info.port)
+                    )
+                    self.pubset.add((register_req.info.id, register_req.info.addr, register_req.info.port))
+                self.cur_pubs += 1
+                self.logger.info(f"Registered publisher: {register_req.info.id}, Topics: {register_req.topiclist}")
 
+            elif register_req.role == discovery_pb2.ROLE_SUBSCRIBER:
+                for topic in register_req.topiclist:
+                    self.hm2.setdefault(topic, []).append(
+                        (register_req.info.id, register_req.info.addr, register_req.info.port)
+                    )
+                self.cur_subs += 1
+                self.logger.info(f"Registered subscriber: {register_req.info.id}, Topics: {register_req.topiclist}")
+
+            elif register_req.role == discovery_pb2.ROLE_BOTH:
+                self.broker_addr = register_req.info.addr
+                self.broker_port = register_req.info.port
+                self.logger.info(f"Registered broker: {register_req.info.id}, Addr: {self.broker_addr}, Port: {self.broker_port}")
 
             ready_resp = discovery_pb2.RegisterResp()
             ready_resp.status = discovery_pb2.STATUS_SUCCESS  # 确保返回 SUCCESS 状态
@@ -265,6 +285,64 @@ class DiscoveryAppln:
             self.logger.error(f"Exception in register_request: {e}", exc_info=True)
             raise
 
+
+    def lookup_response(self, lookup_req):
+        self.logger.info("DiscoveryAppln::lookup_response started")
+        self.logger.debug(f"lookup_req received: {lookup_req.topiclist}")
+        self.logger.debug(f"Current hm state: {self.hm}")
+
+        try:
+            lookup_resp = discovery_pb2.LookupPubByTopicResp()
+            if self.dissemination == "Broker":
+                temp = discovery_pb2.RegistrantInfo()
+                temp.id = "Broker"
+                temp.addr = self.broker_addr
+                temp.port = self.broker_port
+                lookup_resp.array.append(temp)
+            else:
+                for topic in lookup_req.topiclist:
+                    self.logger.debug(f"Processing topic: {topic}")
+                    if topic in self.hm:
+                        for tup in self.hm[topic]:
+                            temp = discovery_pb2.RegistrantInfo()
+                            temp.id = tup[0]
+                            temp.addr = tup[1]
+                            temp.port = tup[2]
+                            lookup_resp.array.append(temp)
+                    else:
+                        self.logger.warning(f"No publisher found for topic {topic}")
+
+            self.logger.debug(f"lookup_resp after processing: {lookup_resp}")
+
+            discovery_resp = discovery_pb2.DiscoveryResp()
+            discovery_resp.msg_type = discovery_pb2.TYPE_LOOKUP_PUB_BY_TOPIC
+            discovery_resp.lookup_resp.CopyFrom(lookup_resp)
+
+            self.logger.debug(f"DiscoveryAppln::lookup_response - Sending response: {discovery_resp}")
+            self.mw_obj.handle_response(discovery_resp)
+
+        except Exception as e:
+            self.logger.error(f"Exception in lookup_response: {e}", exc_info=True)
+            raise
+
+    def pubslookup_response(self, lookup_req):
+        self.logger.info("DiscoveryAppln::pubslookup_response started")
+        try:
+            lookup_resp = discovery_pb2.LookupPubByTopicResp()
+            for topic, pub_list in self.hm.items():
+                for tup in pub_list:
+                    temp = discovery_pb2.RegistrantInfo()
+                    temp.id = tup[0]
+                    temp.addr = tup[1]
+                    temp.port = tup[2]
+                    lookup_resp.array.append(temp)
+            discovery_resp = discovery_pb2.DiscoveryResp()
+            discovery_resp.msg_type = discovery_pb2.MsgTypes.TYPE_LOOKUP_ALL_PUBS
+            discovery_resp.lookup_resp.CopyFrom(lookup_resp)
+            self.mw_obj.handle_response(discovery_resp)
+        except Exception as e:
+            self.logger.error(f"Exception in pubslookup_response: {e}")
+            raise e
 
 def parseCmdLineArgs():
     parser = argparse.ArgumentParser(description="Discovery Application")
