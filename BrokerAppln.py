@@ -22,8 +22,12 @@ import time
 import argparse
 import configparser
 import logging
+import json
 from enum import Enum
-from topic_selector import TopicSelector
+
+from kazoo.client import KazooClient
+from kazoo.exceptions import NoNodeError
+
 from CS6381_MW.BrokerMW import BrokerMW
 from CS6381_MW import discovery_pb2
 
@@ -32,18 +36,26 @@ class BrokerAppln:
         INITIALIZE = 0
         CONFIGURE = 1
         REGISTER = 2
-        ISREADY = 3
-        ADDPUBS = 4
-        DISSEMINATION = 5
+        ADDPUBS = 3
+        DISSEMINATION = 4
+        COMPLETED = 5
 
     def __init__(self, logger):
         self.state = self.State.INITIALIZE
         self.logger = logger
         self.name = None
-        self.num_topics = None
-        self.topiclist = None
+        self.num_topics = 0
+        self.topiclist = []
         self.lookup = None
         self.dissemination = None
+
+        self.zk = None
+        self.is_leader = False
+        self.election_node = None
+        self.leaf_node = None
+        self.election_path = "/brokers/election"
+        self.leader_path = "/brokers/leader"
+
         self.mw_obj = None
 
     def configure(self, args):
@@ -59,18 +71,82 @@ class BrokerAppln:
             self.lookup = config["Discovery"]["Strategy"]
             self.dissemination = config["Dissemination"]["Strategy"]
 
-            self.logger.debug("BrokerAppln::configure - selecting topic list")
-            ts = TopicSelector()
-            self.topiclist = ts.interest(self.num_topics)
+            zk_hosts = config["ZooKeeper"]["Hosts"]
+            self.zk = KazooClient(hosts=zk_hosts)
+            self.zk.start()
+            self.logger.info(f"Connected to ZooKeeper at {zk_hosts}")
 
-            self.logger.debug("BrokerAppln::configure - initializing middleware")
+            self.zk.ensure_path(self.election_path)
+
             self.mw_obj = BrokerMW(self.logger)
-            self.mw_obj.configure(args)
+            self.mw_obj.configure(args, self.zk)
+            self.mw_obj.set_upcall_handle(self)
+
+            self.start_election()
 
             self.logger.info("BrokerAppln::configure - configuration complete")
         except Exception as e:
-            self.logger.error(f"Error during configuration: {e}")
+            self.logger.error(f"BrokerAppln::configure error: {e}", exc_info=True)
             raise e
+
+    def start_election(self):
+        try:
+            node_value = f"{self.mw_obj.addr}:{self.mw_obj.port}".encode("utf-8")
+            self.election_node = self.zk.create(
+                self.election_path + "/node_",
+                value=node_value,
+                ephemeral=True,
+                sequence=True
+            )
+            self.leaf_node = self.election_node.split("/")[-1]
+            self.logger.info(f"[{self.name}] Created election node {self.election_node}")
+            self.check_election_status()
+        except Exception as e:
+            self.logger.error(f"start_election error: {e}", exc_info=True)
+            raise e
+    
+    def check_election_status(self):
+        try:
+            children = self.zk.get_children(self.election_path)
+            children.sort()
+            my_index = children.index(self.leaf_node)
+            if my_index == 0:
+                self.become_leader()
+            else:
+                predecessor = children[my_index - 1]
+                pred_path = f"{self.election_path}/{predecessor}"
+                self.logger.info(f"[{self.name}] I am backup. Watching predecessor: {pred_path}")
+
+                @self.zk.DataWatch(pred_path)
+                def watch_pred(data, stat):
+                    if data is None:
+                        self.logger.info(f"[{self.name}] Predecessor gone, re-checking election status")
+                        self.check_election_status()
+        except Exception as e:
+            self.logger.error(f"check_election_status error: {e}", exc_info=True)
+            raise e
+    
+    def become_leader(self):
+        try:
+            self.is_leader = True
+            self.state = self.State.REGISTER
+            node_value = f"{self.mw_obj.addr}:{self.mw_obj.port}".encode("utf-8")
+            if self.zk.exists(self.leader_path):
+                self.zk.delete(self.leader_path)
+            self.zk.create(self.leader_path, node_value, ephemeral=True)
+
+            self.logger.info(f"[{self.name}] ***** Elected as PRIMARY Broker *****")
+            self.mw_obj.enable_pubsub()
+
+        except Exception as e:
+            self.logger.error(f"become_leader error: {e}", exc_info=True)
+            raise e
+
+    def become_backup(self):
+        self.is_leader = False
+        self.logger.info(f"[{self.name}] I am now BACKUP. Disabling pub-sub.")
+        self.mw_obj.disable_pubsub()
+
 
     def driver(self):
         try:
@@ -78,86 +154,65 @@ class BrokerAppln:
             self.dump()
 
             self.logger.debug("BrokerAppln::driver - setting up upcall handle")
-            self.mw_obj.set_upcall_handle(self)
+            self.mw_obj.event_loop(timeout=1000)
 
-            self.state = self.State.REGISTER
-            self.logger.debug("BrokerAppln::driver - waiting 3 seconds for subscribers to connect...")
-            time.sleep(3)
-            self.mw_obj.event_loop(timeout=0)
             self.logger.info("BrokerAppln::driver completed")
         except Exception as e:
-            self.logger.error(f"Error in driver: {e}")
+            self.logger.error(f"BrokerAppln::driver error: {e}", exc_info=True)
             raise e
 
     def register_response(self, reg_resp):
-        try:
-            self.logger.info("BrokerAppln::register_response")
-            if reg_resp.status != discovery_pb2.STATUS_FAILURE:
-                self.logger.debug("BrokerAppln::register_response - registration successful")
-                self.state = self.State.ISREADY
-                return 0
-            else:
-                self.logger.error(f"Registration failed: {reg_resp.reason}")
-                raise ValueError("Broker registration failed")
-        except Exception as e:
-            self.logger.error(f"Error in register_response: {e}")
-            raise e
+        self.logger.info("BrokerAppln::register_response")
+        if reg_resp.status == discovery_pb2.STATUS_SUCCESS:
+            self.logger.debug("BrokerAppln::register_response - registration successful")
+            self.state = self.State.ADDPUBS
+        else:
+            self.logger.error(f"Registration failed: {reg_resp.reason}")
+            raise ValueError("Broker registration failed")
+        return 0
 
     def isready_response(self, isready_resp):
-        try:
-            self.logger.info("BrokerAppln::isready_response")
-            if isready_resp.status == discovery_pb2.STATUS_FAILURE:
-                self.logger.debug("Discovery service not ready, retrying...")
-                time.sleep(5)
-            else:
-                self.logger.debug("Discovery service is ready")
-                self.state = self.State.ADDPUBS
-            return 0
-        except Exception as e:
-            self.logger.error(f"Error in isready_response: {e}")
-            raise e
+        self.logger.info("BrokerAppln::isready_response")
+        if isready_resp.status == discovery_pb2.STATUS_SUCCESS:
+            self.logger.debug("Discovery is ready => proceed to ADDPUBS")
+            self.state = self.State.ADDPUBS
+        else:
+            self.logger.debug("Discovery not ready, retrying in 5s")
+            time.sleep(5)
+        return 0
 
     def pubslookup_response(self, lookup_resp):
-        try:
-            self.logger.info("BrokerAppln::pubslookup_response")
-            for pub in lookup_resp.array:
-                if pub.id == self.name:
-                    self.logger.debug(f"Skipping broker's own registration: {pub.id}")
-                    continue
-                addr = pub.addr
-                port = pub.port
-                self.mw_obj.lookup_bind(addr, port)
-                self.logger.debug(f"BrokerAppln::pubslookup_response - connected to publisher {pub.id} at {addr}:{port}")
-            self.state = self.State.DISSEMINATION
-            self.logger.debug("BrokerAppln::pubslookup_response - publishers bound successfully")
-            return 0
-        except Exception as e:
-            self.logger.error(f"Error in pubslookup_response: {e}")
-            raise e
+        self.logger.info("BrokerAppln::pubslookup_response")
+        for pub in lookup_resp.array:
+            if pub.id == self.name:
+                continue
+            self.mw_obj.lookup_bind(pub.addr, pub.port)
+            self.logger.debug(f"Bound to publisher {pub.id} at {pub.addr}:{pub.port}")
+        self.state = self.State.DISSEMINATION
+        return 0
 
     def invoke_operation(self):
         try:
-            self.logger.info("BrokerAppln::invoke_operation")
+            self.logger.debug(f"BrokerAppln::invoke_operation - current state: {self.state}")
+            if not self.is_leader:
+                return 1000
+
             if self.state == self.State.REGISTER:
-                self.logger.debug("BrokerAppln::invoke_operation - registering with discovery service")
-                self.mw_obj.register(self.name, self.topiclist)
-                return None
-            elif self.state == self.State.ISREADY:
-                self.logger.debug("BrokerAppln::invoke_operation - checking readiness with discovery service")
-                self.mw_obj.is_ready()
+                self.mw_obj.register(self.name, [])
                 return None
             elif self.state == self.State.ADDPUBS:
-                self.logger.debug("BrokerAppln::invoke_operation - requesting publishers info from discovery service")
                 self.mw_obj.request_pubs()
                 return None
             elif self.state == self.State.DISSEMINATION:
-                #In dissemination state, the broker's event loop simply forwards messages.
-                self.logger.debug("BrokerAppln::invoke_operation - dissemination in progress")
+                return 1000
+            elif self.state == self.State.COMPLETED:
+                self.mw_obj.disable_event_loop()
                 return None
             else:
-                raise ValueError("Unknown state in BrokerAppln::invoke_operation")
+                return 1000
+
         except Exception as e:
-            self.logger.error(f"Error in invoke_operation: {e}")
+            self.logger.error(f"invoke_operation error: {e}", exc_info=True)
             raise e
 
     def dump(self):
@@ -172,7 +227,7 @@ class BrokerAppln:
             self.logger.info(f"     Topic List: {self.topiclist}")
             self.logger.info("**********************************")
         except Exception as e:
-            self.logger.error(f"Error in dump: {e}")
+            self.logger.error(f"dump error: {e}", exc_info=True)
             raise e
 
 def parseCmdLineArgs():
@@ -196,7 +251,7 @@ def main():
         broker_app.configure(args)
         broker_app.driver()
     except Exception as e:
-        logger.error(f"Exception in main: {e}")
+        logger.error(f"Exception in main: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()

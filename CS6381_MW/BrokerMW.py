@@ -35,81 +35,67 @@ class BrokerMW:
         self.addr = None     # Broker's IP address
         self.port = None     # Broker's dissemination port
         self.upcall_obj = None
-        self.handle_events = True
-        self.topiclist = None
 
-    def configure(self, args):
+        self.context = None
+        self.handle_events = True
+        self.pub_enabled = False
+
+        self.zk = None
+        self.discovery_addr = None
+
+    def configure(self, args, zk_client):
         try:
             self.logger.info("BrokerMW::configure")
+
+            self.zk = zk_client
             self.addr = args.addr
             self.port = int(args.port)
 
-            # Set up ZMQ context and sockets
-            self.logger.debug("BrokerMW::configure - obtaining ZMQ context")
-            context = zmq.Context()
-
-            self.logger.debug("BrokerMW::configure - creating REQ, PUB, and SUB sockets")
-            self.req = context.socket(zmq.REQ)
-            self.pub = context.socket(zmq.PUB)
-            self.sub = context.socket(zmq.SUB)
-
-            self.logger.debug("BrokerMW::configure - setting up poller")
+            self.context = zmq.Context()
+            self.req = self.context.socket(zmq.REQ)
             self.poller = zmq.Poller()
             self.poller.register(self.req, zmq.POLLIN)
-            self.poller.register(self.sub, zmq.POLLIN)
 
-            # Connect REQ socket to Discovery service
-            connect_str = f"tcp://{args.discovery}"
-            self.logger.debug(f"BrokerMW::configure - connecting REQ socket to {connect_str}")
+            discovery_host_port = args.discovery
+            connect_str = f"tcp://{discovery_host_port}"
+            self.logger.info(f"BrokerMW::configure - connecting REQ socket to {connect_str}")
             self.req.connect(connect_str)
-
-            # Bind PUB socket (for disseminating to subscribers)
-            pub_bind_str = f"tcp://*:{self.port}"
-            self.logger.debug(f"BrokerMW::configure - binding PUB socket to {pub_bind_str}")
-            self.pub.bind(pub_bind_str)
 
             self.logger.info("BrokerMW::configure completed")
         except Exception as e:
-            self.logger.error(f"BrokerMW::configure error: {e}")
+            self.logger.error(f"BrokerMW::configure error: {e}", exc_info=True)
             raise e
+    
+    def enable_pubsub(self):
+        if not self.pub_enabled:
+            self.logger.info("BrokerMW::enable_pubsub - enabling PUB/SUB sockets")
 
-    def event_loop(self, timeout=None):
-        try:
-            self.logger.info("BrokerMW::event_loop - starting event loop")
-            while self.handle_events:
-                if timeout is None:
-                    timeout = 1000
-                if (hasattr(self.upcall_obj, "state") and 
-                    self.upcall_obj.state.name == "DISSEMINATE" and 
-                    not self.dissemination_delay_done):
-                    self.logger.debug("BrokerMW::event_loop - in DISSEMINATION state; sleeping 3 seconds to allow subscribers to connect")
-                    time.sleep(3)
-                    self.dissemination_delay_done = True
-                events = dict(self.poller.poll(timeout=timeout))
-                if not events:
-                    timeout = self.upcall_obj.invoke_operation()
-                    if timeout is None:
-                        timeout = 1000
-                elif self.req in events:
-                    timeout = self.handle_reply()
-                    if timeout is None:
-                        timeout = 1000
-                elif self.sub in events:
-                    # Receive message from publishers and forward to subscribers
-                    message = self.sub.recv_string()
-                    self.logger.debug(f"BrokerMW::event_loop - received message: {message}")
-                    time.sleep(0.02)
-                    self.pub.send_string(message)
-                else:
-                    self.logger.error("Unknown event in BrokerMW::event_loop")
-            self.logger.info("BrokerMW::event_loop - exiting event loop")
-        except Exception as e:
-            self.logger.error(f"BrokerMW::event_loop error: {e}")
-            raise e
+            self.pub = self.context.socket(zmq.PUB)
+            pub_bind_str = f"tcp://*:{self.port}"
+            self.pub.bind(pub_bind_str)
+
+            self.sub = self.context.socket(zmq.SUB)
+            self.poller.register(self.sub, zmq.POLLIN)
+
+            self.pub_enabled = True
+
+            self.logger.info("BrokerMW::enable_pubsub - registering as ROLE_BOTH")
+            self.register(self.upcall_obj.name, [])
+
+    def disable_pubsub(self):
+        if self.pub_enabled:
+            self.logger.info("BrokerMW::disable_pubsub - closing PUB/SUB sockets")
+
+            self.poller.unregister(self.sub)
+            self.sub.close()
+            self.pub.close()
+
+            self.pub_enabled = False
 
     def register(self, name, topiclist):
         try:
             self.logger.info("BrokerMW::register")
+
             reg_info = discovery_pb2.RegistrantInfo()
             reg_info.id = name
             reg_info.addr = self.addr
@@ -124,17 +110,26 @@ class BrokerMW:
             disc_req.msg_type = discovery_pb2.TYPE_REGISTER
             disc_req.register_req.CopyFrom(register_req)
 
-            # Subscribe to each topic on the SUB socket (to receive from publishers)
-            for topic in topiclist:
-                self.sub.setsockopt_string(zmq.SUBSCRIBE, topic)
-
             buf2send = disc_req.SerializeToString()
             self.logger.debug("BrokerMW::register - sending registration request")
             self.req.send(buf2send)
+
         except Exception as e:
-            self.logger.error(f"BrokerMW::register error: {e}")
+            self.logger.error(f"BrokerMW::register error: {e}", exc_info=True)
             raise e
 
+    def request_pubs(self):
+        try:
+            self.logger.info("BrokerMW::request_pubs")
+            lookup_req = discovery_pb2.LookupPubByTopicReq()
+            disc_req = discovery_pb2.DiscoveryReq()
+            disc_req.msg_type = discovery_pb2.TYPE_LOOKUP_ALL_PUBS
+            disc_req.lookup_req.CopyFrom(lookup_req)
+            self.req.send(disc_req.SerializeToString())
+        except Exception as e:
+            self.logger.error(f"BrokerMW::request_pubs error: {e}", exc_info=True)
+            raise e
+    
     def is_ready(self):
         try:
             self.logger.info("BrokerMW::is_ready")
@@ -142,33 +137,44 @@ class BrokerMW:
             disc_req = discovery_pb2.DiscoveryReq()
             disc_req.msg_type = discovery_pb2.TYPE_ISREADY
             disc_req.isready_req.CopyFrom(isready_req)
-            buf2send = disc_req.SerializeToString()
-            self.logger.debug("BrokerMW::is_ready - sending readiness check")
-            self.req.send(buf2send)
+            self.req.send(disc_req.SerializeToString())
         except Exception as e:
-            self.logger.error(f"BrokerMW::is_ready error: {e}")
+            self.logger.error(f"BrokerMW::is_ready error: {e}", exc_info=True)
             raise e
 
-    def request_pubs(self):
+
+    def event_loop(self, timeout=None):
         try:
-            self.logger.info("BrokerMW::request_pubs")
-            pubs_req = discovery_pb2.LookupPubByTopicReq()
-            disc_req = discovery_pb2.DiscoveryReq()
-            disc_req.msg_type = discovery_pb2.TYPE_LOOKUP_ALL_PUBS
-            disc_req.lookup_req.CopyFrom(pubs_req)
-            buf2send = disc_req.SerializeToString()
-            self.logger.debug("BrokerMW::request_pubs - sending request")
-            self.req.send(buf2send)
-        except Exception as e:
-            self.logger.error(f"BrokerMW::request_pubs error: {e}")
-            raise e
+            self.logger.info("BrokerMW::event_loop - starting event loop")
+            while self.handle_events:
+                if timeout is None:
+                    timeout = 1000
 
+                events = dict(self.poller.poll(timeout=timeout))
+                if not events:
+                    new_timeout = self.upcall_obj.invoke_operation()
+                    timeout = new_timeout if new_timeout is not None else 1000
+                else:
+                    if self.req in events:
+                        self.handle_reply()
+
+                    if self.pub_enabled and self.sub and (self.sub in events):
+                        message = self.sub.recv_string()
+                        self.logger.debug(f"BrokerMW::event_loop - received from pub: {message}")
+                        self.pub.send_string(message)
+
+            self.logger.info("BrokerMW::event_loop - exiting event loop")
+        except Exception as e:
+            self.logger.error(f"BrokerMW::event_loop error: {e}", exc_info=True)
+            raise e
+    
     def handle_reply(self):
         try:
             self.logger.info("BrokerMW::handle_reply")
             bytes_rcvd = self.req.recv()
             disc_resp = discovery_pb2.DiscoveryResp()
             disc_resp.ParseFromString(bytes_rcvd)
+
             if disc_resp.msg_type == discovery_pb2.TYPE_REGISTER:
                 return self.upcall_obj.register_response(disc_resp.register_resp)
             elif disc_resp.msg_type == discovery_pb2.TYPE_ISREADY:
@@ -176,17 +182,21 @@ class BrokerMW:
             elif disc_resp.msg_type == discovery_pb2.TYPE_LOOKUP_ALL_PUBS:
                 return self.upcall_obj.pubslookup_response(disc_resp.lookup_resp)
             else:
+                self.logger.error("Unrecognized response message from Discovery")
                 raise ValueError("Unrecognized response message")
         except Exception as e:
-            self.logger.error(f"BrokerMW::handle_reply error: {e}")
+            self.logger.error(f"BrokerMW::handle_reply error: {e}", exc_info=True)
             raise e
-
+        
     def lookup_bind(self, addr, port):
         try:
-            self.logger.debug(f"BrokerMW::lookup_bind - connecting SUB socket to tcp://{addr}:{port}")
-            self.sub.connect(f"tcp://{addr}:{port}")
+            if self.pub_enabled and self.sub:
+                connect_str = f"tcp://{addr}:{port}"
+                self.logger.info(f"BrokerMW::lookup_bind - SUB connect to {connect_str}")
+                self.sub.connect(connect_str)
+                self.sub.setsockopt_string(zmq.SUBSCRIBE, "")
         except Exception as e:
-            self.logger.error(f"BrokerMW::lookup_bind error: {e}")
+            self.logger.error(f"BrokerMW::lookup_bind error: {e}", exc_info=True)
             raise e
 
     def set_upcall_handle(self, upcall_obj):
@@ -194,3 +204,18 @@ class BrokerMW:
 
     def disable_event_loop(self):
         self.handle_events = False
+        self.logger.info("BrokerMW::disable_event_loop - event loop disabled")
+
+    def cleanup(self):
+        try:
+            if self.sub:
+                self.sub.close()
+            if self.pub:
+                self.pub.close()
+            if self.req:
+                self.req.close()
+            if self.context:
+                self.context.term()
+        except Exception as e:
+            self.logger.warning(f"BrokerMW::cleanup error: {e}")
+
