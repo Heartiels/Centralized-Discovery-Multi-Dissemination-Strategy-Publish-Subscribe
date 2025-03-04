@@ -235,7 +235,7 @@ def parseCmdLineArgs():
     parser.add_argument("-n", "--name", default="broker", help="Unique name for the broker")
     parser.add_argument("-a", "--addr", default="localhost", help="Broker IP address")
     parser.add_argument("-p", "--port", type=int, default=5570, help="Broker port")
-    parser.add_argument("-d", "--discovery", default="localhost:5555", help="Discovery service address")
+    # parser.add_argument("-d", "--discovery", default="localhost:5555", help="Discovery service address")
     parser.add_argument("-T", "--num_topics", type=int, default=5, help="Number of topics to handle")
     parser.add_argument("-c", "--config", default="config.ini", help="Configuration file")
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, help="Logging level")
