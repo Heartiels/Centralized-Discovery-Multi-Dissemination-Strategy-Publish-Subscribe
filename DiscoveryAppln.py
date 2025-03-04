@@ -56,8 +56,8 @@ class DiscoveryAppln:
             logging.getLogger("kazoo").setLevel(logging.WARNING)
 
             # Initialize variables
-            self.subs = args.subs
-            self.pubs = args.pubs
+            # self.subs = args.subs
+            # self.pubs = args.pubs
 
             # Read config
             config = configparser.ConfigParser()
@@ -346,8 +346,8 @@ class DiscoveryAppln:
 
 def parseCmdLineArgs():
     parser = argparse.ArgumentParser(description="Discovery Application")
-    parser.add_argument("-P", "--pubs", type=int, default=1, help="total number of publishers in the system")
-    parser.add_argument("-S", "--subs", type=int, default=1, help="total number of subscribers in the system")
+    # parser.add_argument("-P", "--pubs", type=int, default=1, help="total number of publishers in the system")
+    # parser.add_argument("-S", "--subs", type=int, default=1, help="total number of subscribers in the system")
     parser.add_argument("-c", "--config", default="config.ini", help="configuration file")
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, choices=[
         logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL], help="logging level")
