@@ -97,6 +97,16 @@ python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -d localhost:5555 -T 3 -
 python3 SubscriberAppln.py -n sub2 -a localhost -p 5561 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f latency2.json
 # (Launch as many subscriber instances as desired.)
 
+#After applying zookeeper:
+Start the Discovery Service:
+python3 DiscoveryAppln.py -p 5555 -c config.ini -l 10
+
+Start Publishers:
+python3 PublisherAppln.py -n pub1 -a localhost -p 5577 -T 3 -f 1 -i 100 -c config.ini -l 10
+
+Start Subscribers:
+python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10 -t -f latency.json
+
 5.2 ViaBroker Dissemination Mode
 In this mode, the Broker serves as the intermediary. Recommended start-up order:
 
@@ -110,15 +120,22 @@ Start Publishers:
 python3 PublisherAppln.py -n pub1 -a localhost -p 5577 -d localhost:5555 -T 3 -f 1 -i 100 -c config.ini -l 10
 python3 PublisherAppln.py -n pub2 -a localhost -p 5578 -d localhost:5555 -T 3 -f 1 -i 100 -c config.ini -l 10
 
-#After applying zookeeper:
-python3 PublisherAppln.py -n pub2 -a localhost -p 5578 -T 3 -f 1 -i 100 -c config.ini -l 10
-
 Start Subscribers:
 python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f latency.json
-python3 SubscriberAppln.py -n sub2 -a localhost -p 5561 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f late
+python3 SubscriberAppln.py -n sub2 -a localhost -p 5561 -d localhost:5555 -T 3 -c config.ini -l 10 -t -f latency.json
 
 #After applying zookeeper:
-python3 SubscriberAppln.py -n sub2 -a localhost -p 5561 -T 3 -c config.ini -l 10 -t -f late
+Start the Discovery Service:
+python3 DiscoveryAppln.py -p 5555 -c config.ini -l 10
+
+Start the Broker:
+python3 BrokerAppln.py -n broker -a localhost -p 5570 -T 3 -c config.ini -l 10
+
+Start Publishers:
+python3 PublisherAppln.py -n pub1 -a localhost -p 5577 -T 3 -f 1 -i 100 -c config.ini -l 10
+
+Start Subscribers:
+python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10 -t -f latency.json
 ---
 
 ## 6. Demonstration Video
