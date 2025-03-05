@@ -1,5 +1,5 @@
-# CS 6381: Distributed Systems Principles – Programming Assignment 1
-## Centralized Discovery, Multi-Dissemination Strategy Publish–Subscribe
+# CS 6381: Distributed Systems Principles – Programming Assignment 2
+
 **Spring 2025**
 
 ---
@@ -141,7 +141,9 @@ python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10
 ## 6. Demonstration Video
 A demonstration video is provided with this project. The video shows:
 
-https://youtu.be/rihmkwGVek8
+Programming Assignment 1: https://youtu.be/rihmkwGVek8
+
+Programming Assignment 2: https://youtu.be/9kSFTGLd9-c
 
 Authors
 Haowen Yao
