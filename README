@@ -138,7 +138,14 @@ Start Subscribers:
 python3 SubscriberAppln.py -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10 -t -f latency.json
 ---
 
-## 6. Demonstration Video
+## 6. Latency Reuslts
+Latency results is provided in the directory latency_results.
+By comparing the latency files generated from the two assignments, it can be observed that the primary source of high latency comes from network communication time, 
+which may occur during system startup. 
+However, no significant delay caused by the deployment of the ZooKeeper service was observed. 
+The vast majority of message latencies fall within 1-2ms, with occasional delays exceeding 10ms, which can be attributed to network fluctuations.
+
+## 7. Demonstration Video
 A demonstration video is provided with this project. The video shows:
 
 Programming Assignment 1: https://youtu.be/rihmkwGVek8
