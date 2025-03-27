@@ -216,6 +216,7 @@ def parseCmdLineArgs():
     parser.add_argument("-t", "--toggle", action="store_true", help="Enable or disable toggle for subscriber")
     parser.add_argument("-f", "--filename", default="latency.json", help="Filename for logging latency metrics")
     parser.add_argument("-c", "--config", default="config.ini", help="Configuration file")
+    parser.add_argument("--group", default="0", help="Load balancing group ID for Subscriber")
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, help="Logging level")
     return parser.parse_args()
 

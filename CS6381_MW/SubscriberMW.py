@@ -54,6 +54,7 @@ class SubscriberMW:
             self.logger.debug("SubscriberMW::configure")
             self.port = int(args.port)
             self.addr = args.addr
+            self.group_id = args.group if hasattr(args, "group") else "0"
             self.toggle = args.toggle
             self.filename = args.filename
 
@@ -274,8 +275,9 @@ class SubscriberMW:
                 self.logger.warning("Leader node is empty. Waiting for a new leader...")
 
         # 立即获取当前 Discovery
-        self.logger.info("Setting up DataWatch for /discovery/leader")
-        self.zk.DataWatch("/discovery/leader", update_primary_discovery)
+        watch_path = f"/discovery/leader/group_{self.group_id}"
+        self.logger.info(f"Setting up DataWatch for {watch_path}")
+        self.zk.DataWatch(watch_path, update_primary_discovery)
 
     def update_discovery_connection(self, new_primary):
         """发现新 Leader 并重新注册"""

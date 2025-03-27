@@ -21,6 +21,8 @@ class DiscoveryMW():
         self.port = None
         self.upcall_obj = None
         self.handle_events = True
+        self.group_id = "0"
+
 
     def configure(self, args):
         ''' Initialize the object '''
@@ -30,13 +32,15 @@ class DiscoveryMW():
             self.port = args.port
             self.addr = "127.0.0.1"
 
+            self.group_id = args.group if hasattr(args, "group") else "0"
+
             context = zmq.Context()
             self.poller = zmq.Poller()
 
             self.rep = context.socket(zmq.REP)
             bind_string = f"tcp://*:{self.port}"
             self.rep.bind(bind_string)
-            self.logger.info(f"DiscoveryMW binding to tcp://*:{self.port}")
+            self.logger.info(f"DiscoveryMW binding to {bind_string} in group {self.group_id}")
 
             self.poller.register(self.rep, zmq.POLLIN)
             self.logger.info("DiscoveryMW::configure completed")

@@ -235,6 +235,7 @@ def parseCmdLineArgs():
     parser.add_argument("-f", "--frequency", type=int, default=1, help="Publishing frequency")
     parser.add_argument("-i", "--iters", type=int, default=1000, help="Number of iterations")
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, help="Logging level")
+    parser.add_argument("--group", default="0", help="Load balancing group ID for Publisher")
 
     return parser.parse_args()
 

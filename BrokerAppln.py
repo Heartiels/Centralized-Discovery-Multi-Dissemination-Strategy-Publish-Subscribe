@@ -52,9 +52,9 @@ class BrokerAppln:
         self.zk = None
         self.is_leader = False
         self.election_node = None
-        self.leaf_node = None
-        self.election_path = "/brokers/election"
-        self.leader_path = "/brokers/leader"
+        self.group_id = "0"  # 默认组号
+        self.election_path = f"/brokers/election/group_{self.group_id}"
+        self.leader_path = f"/brokers/leader/group_{self.group_id}"
 
         self.mw_obj = None
 
@@ -70,6 +70,10 @@ class BrokerAppln:
             config.read(args.config)
             self.lookup = config["Discovery"]["Strategy"]
             self.dissemination = config["Dissemination"]["Strategy"]
+
+            self.group_id = args.group if hasattr(args, "group") else "0"
+            self.election_path = f"/brokers/election/group_{self.group_id}"
+            self.leader_path = f"/brokers/leader/group_{self.group_id}"
 
             zk_hosts = config["ZooKeeper"]["Hosts"]
             self.zk = KazooClient(hosts=zk_hosts)
@@ -133,8 +137,7 @@ class BrokerAppln:
             node_value = f"{self.mw_obj.addr}:{self.mw_obj.port}".encode("utf-8")
             if self.zk.exists(self.leader_path):
                 self.zk.delete(self.leader_path)
-            self.zk.create(self.leader_path, node_value, ephemeral=True)
-
+            self.zk.create(self.leader_path, node_value, ephemeral=True, makepath=True)
             self.logger.info(f"[{self.name}] ***** Elected as PRIMARY Broker *****")
             self.mw_obj.enable_pubsub()
 
@@ -238,6 +241,7 @@ def parseCmdLineArgs():
     # parser.add_argument("-d", "--discovery", default="localhost:5555", help="Discovery service address")
     parser.add_argument("-T", "--num_topics", type=int, default=5, help="Number of topics to handle")
     parser.add_argument("-c", "--config", default="config.ini", help="Configuration file")
+    parser.add_argument("--group", default="0", help="Load balancing group ID for Broker")
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, help="Logging level")
     return parser.parse_args()
 

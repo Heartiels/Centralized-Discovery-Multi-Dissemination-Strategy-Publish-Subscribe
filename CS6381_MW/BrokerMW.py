@@ -42,6 +42,7 @@ class BrokerMW:
 
         self.zk = None
         self.primary_discovery = None
+        self.group_id = "0"
 
     def configure(self, args, zk_client):
         try:
@@ -50,6 +51,8 @@ class BrokerMW:
             self.zk = zk_client
             self.addr = args.addr
             self.port = int(args.port)
+
+            self.group_id = args.group if hasattr(args, "group") else "0"
 
             self.context = zmq.Context()
             self.req = self.context.socket(zmq.REQ)
@@ -235,8 +238,9 @@ class BrokerMW:
                 self.logger.warning("Leader node is empty. Waiting for a new leader...")
 
         # 立即获取当前 Discovery
-        self.logger.info("Setting up DataWatch for /discovery/leader")
-        self.zk.DataWatch("/discovery/leader", update_primary_discovery)
+        watch_path = f"/discovery/leader/group_{self.group_id}"
+        self.logger.info(f"Setting up DataWatch for {watch_path}")
+        self.zk.DataWatch(watch_path, update_primary_discovery)
 
     def update_discovery_connection(self, new_primary):
         """发现新 Leader 并重新注册"""

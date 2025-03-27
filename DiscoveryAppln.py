@@ -43,14 +43,21 @@ class DiscoveryAppln:
         self.zk = None  # ZooKeeper client
         self.is_leader = False
         self.election_node = None  # 当前选举节点路径
-        self.leader_path = "/discovery/leader"  # 存放 leader 的地址
-        self.election_path = "/discovery/election"  # 选举候选者注册目录
+
+        self.group_id = "0"  # 默认组号为 "0"，后续从命令行参数传入
+        self.leader_path = f"/discovery/leader/group_{self.group_id}"
+        self.election_path = f"/discovery/election/group_{self.group_id}"
 
 
     def configure(self, args):
         ''' Initialize the object '''
         try:
             self.logger.info("DiscoveryAppln::configure")
+
+            # 读取组号参数（可以在命令行中添加 --group 参数）
+            self.group_id = args.group if hasattr(args, "group") else "0"
+            self.leader_path = f"/discovery/leader/group_{self.group_id}"
+            self.election_path = f"/discovery/election/group_{self.group_id}"
 
             # Reduce Kazoo logging level to only show warnings or higher
             logging.getLogger("kazoo").setLevel(logging.WARNING)
@@ -76,6 +83,10 @@ class DiscoveryAppln:
             # Ensure base paths exist
             self.zk.ensure_path(self.leader_path)
             self.zk.ensure_path(self.election_path)
+
+            # 同时也可以确保注册信息路径存在
+            self.zk.ensure_path(f"/registrations/group_{self.group_id}/publishers")
+            self.zk.ensure_path(f"/registrations/group_{self.group_id}/subscribers")
 
             self.watch_leader()
             self.start_election()
@@ -163,15 +174,17 @@ class DiscoveryAppln:
     def reload_registrations(self):
         """新 Leader 继承 Publisher 和 Subscriber 的注册信息"""
         try:
-            if not self.zk.exists("/registrations"):
+            reg_base = f"/registrations/group_{self.group_id}"
+            if not self.zk.exists(reg_base):
                 self.logger.info("No previous registrations found in ZooKeeper")
                 return
 
             # 重新加载 Publishers
-            if self.zk.exists("/registrations/publishers"):
-                pubs = self.zk.get_children("/registrations/publishers")
+            pub_path = f"{reg_base}/publishers"
+            if self.zk.exists(pub_path):
+                pubs = self.zk.get_children(pub_path)
                 for pub in pubs:
-                    data, _ = self.zk.get(f"/registrations/publishers/{pub}")
+                    data, _ = self.zk.get(f"{pub_path}/{pub}")
                     pub_info = json.loads(data.decode())
                     if not pub_info:
                         continue
@@ -183,10 +196,11 @@ class DiscoveryAppln:
                         self.pubset.add((pub, pub_info["addr"], pub_info["port"]))
 
             # 重新加载 Subscribers
-            if self.zk.exists("/registrations/subscribers"):
-                subs = self.zk.get_children("/registrations/subscribers")
+            sub_path = f"{reg_base}/subscribers"
+            if self.zk.exists(sub_path):
+                subs = self.zk.get_children(sub_path)
                 for sub in subs:
-                    data, _ = self.zk.get(f"/registrations/subscribers/{sub}")
+                    data, _ = self.zk.get(f"{sub_path}/{sub}")
                     sub_info = json.loads(data.decode())
                     if not sub_info:
                         continue
@@ -239,7 +253,7 @@ class DiscoveryAppln:
                 f"for topics {register_req.topiclist}"
             )
             role_str = "publishers" if register_req.role == discovery_pb2.ROLE_PUBLISHER else "subscribers"
-            path = f"/registrations/{role_str}/{register_req.info.id}"
+            path = f"/registrations/group_{self.group_id}/{role_str}/{register_req.info.id}"
             data = json.dumps({
                 "addr": register_req.info.addr,
                 "port": register_req.info.port,
@@ -352,6 +366,7 @@ def parseCmdLineArgs():
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, choices=[
         logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL], help="logging level")
     parser.add_argument("-p", "--port", type=int, default=5555, help="Port number on which the Discovery service runs")
+    parser.add_argument("--group", default="0", help="Load balancing group ID for Discovery")
     return parser.parse_args()
 
 
