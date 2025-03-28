@@ -96,9 +96,10 @@ Note: Each service instance (Discovery, Broker, Publisher, Subscriber) uses the 
 
 ---
 
-### 6. Latency Reuslts
+### 6. Reuslts
 Latency testing in Milestone 1 shows that the added ZooKeeper-based group logic does not introduce significant overhead.
 Most message latencies remain within 1–2ms, with occasional spikes due to expected network variance. The system remains responsive and scalable under multiple logical groups.
+![image](https://github.com/Heartiels/Centralized-Discovery-Multi-Dissemination-Strategy-Publish-Subscribe/blob/main/latency_results/result.png)
 
 ## 7. Demonstration Video
 Programming Assignment 1: https://youtu.be/rihmkwGVek8
