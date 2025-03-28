@@ -19,7 +19,7 @@ The base architecture remains unchanged from Assignment 2. Assignment 3 introduc
 
 ---
 
-## File Structure
+### 3. File Structure
 
 
 <pre lang="markdown">├── CS6381_MW/
