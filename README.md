@@ -22,33 +22,7 @@ The base architecture remains unchanged from Assignment 2. Assignment 3 introduc
 ## File Structure
 
 
-.
-├── CS6381_MW/
-│   ├── __init__.py                
-│   ├── BrokerMW.py                # Updated with load balancing (group) support
-│   ├── Common.py                  
-│   ├── discovery_pb2.py           
-│   ├── discovery.proto            
-│   ├── DiscoveryMW.py             # Updated with group parameter support in configuration/logging
-│   ├── PublisherMW.py             # Updated to use --group and listen on /discovery/leader/group_<group_id>
-│   ├── SubscriberMW.py            # Updated similarly for --group support
-│   └── topic.proto                
-│
-├── EXPERIMENTS/                   
-│   ├── local_5P_4S.sh             
-│   ├── Local_README               
-│   ├── mininet_1S_10H_5P_4S.sh    
-│   └── Mininet_README             
-│
-├── config.ini                     # Configuration file for Discovery and Dissemination strategies, ZooKeeper hosts, etc.
-├── BrokerAppln.py                 # Application logic for the Broker (with load balancing group support)
-├── DiscoveryAppln.py              # Application logic for the Discovery Service (with group-based leader election)
-├── KeyChanges.docx                # Document detailing key modifications for Assignment 3
-├── PublisherAppln.py              # Application logic for Publishers (now accepts --group)
-├── README.md                      # Project documentation (this file)
-├── SubscriberAppln.py             # Application logic for Subscribers (now accepts --group)
-├── TESTING/                       # Test scripts and files
-└── topic_selector.py              # Utility for topic selection
+<pre lang="markdown"> ```text . ├── CS6381_MW/ │ ├── __init__.py # Package initializer │ ├── BrokerMW.py # Updated with load balancing (group) support │ ├── Common.py # Shared constants and utilities │ ├── discovery_pb2.py # gRPC generated code │ ├── discovery.proto # Protocol buffer definition for Discovery │ ├── DiscoveryMW.py # Middleware with group support for Discovery │ ├── PublisherMW.py # Middleware for Publishers with --group support │ ├── SubscriberMW.py # Middleware for Subscribers with --group support │ └── topic.proto # Protocol buffer for topic communication │ ├── EXPERIMENTS/ │ ├── local_5P_4S.sh # Script for local testing with 5 Publishers and 4 Subscribers │ ├── Local_README # Instructions for local test setup │ ├── mininet_1S_10H_5P_4S.sh # Mininet test script │ └── Mininet_README # Instructions for Mininet setup │ ├── config.ini # Configuration for Discovery, Dissemination, ZooKeeper, etc. ├── BrokerAppln.py # Application logic for Broker (supports group-based load balancing) ├── DiscoveryAppln.py # Discovery service logic with group-based leader election ├── KeyChanges.docx # Summary of key changes for Assignment 3 ├── PublisherAppln.py # Publisher application (now supports --group) ├── README.md # Project documentation ├── SubscriberAppln.py # Subscriber application (now supports --group) ├── TESTING/ # Test cases and validation scripts └── topic_selector.py # Topic selection utility ``` </pre>
 
 
 ---
