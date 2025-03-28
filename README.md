@@ -65,18 +65,14 @@ The base architecture remains unchanged from Assignment 2. Assignment 3 introduc
 
 ### 5. Running the System
 5.1 Direct Dissemination Mode (with ZooKeeper and group-based load balancing)
-
 1. Start the Discovery Service (e.g., group 0):
-<pre lang="markdown"> 
-python3 DiscoveryAppln.py --group 0 -p 5555 -c config.ini -l 10
+<pre lang="markdown"> python3 DiscoveryAppln.py --group 0 -p 5555 -c config.ini -l 10
 </pre>
-
 2. Start Publishers (specify the same group):
 <pre lang="markdown"> 
 python3 PublisherAppln.py --group 0 -n pub1 -a localhost -p 5577 -T 3 -f 1 -i 100 -c config.ini -l 10
 python3 PublisherAppln.py --group 0 -n pub2 -a localhost -p 5578 -T 3 -f 1 -i 100 -c config.ini -l 10
 </pre>
-
 3. Start Subscribers (same group):
 <pre lang="markdown"> 
 python3 SubscriberAppln.py --group 0 -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10 -t -f latency.json
