@@ -67,32 +67,44 @@ The base architecture remains unchanged from Assignment 2. Assignment 3 introduc
 5.1 Direct Dissemination Mode (with ZooKeeper and group-based load balancing)
 
 1. Start the Discovery Service (e.g., group 0):
+<pre lang="markdown"> 
 python3 DiscoveryAppln.py --group 0 -p 5555 -c config.ini -l 10
+</pre>
 
 2. Start Publishers (specify the same group):
+<pre lang="markdown"> 
 python3 PublisherAppln.py --group 0 -n pub1 -a localhost -p 5577 -T 3 -f 1 -i 100 -c config.ini -l 10
 python3 PublisherAppln.py --group 0 -n pub2 -a localhost -p 5578 -T 3 -f 1 -i 100 -c config.ini -l 10
+</pre>
 
 3. Start Subscribers (same group):
+<pre lang="markdown"> 
 python3 SubscriberAppln.py --group 0 -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10 -t -f latency.json
 python3 SubscriberAppln.py --group 0 -n sub2 -a localhost -p 5561 -T 3 -c config.ini -l 10 -t -f latency2.json
+</pre>
 
 5.2 ViaBroker Dissemination Mode (with ZooKeeper and group-based load balancing)
 
 1. Start the Discovery Service:
+<pre lang="markdown"> 
 python3 DiscoveryAppln.py --group 0 -p 5555 -c config.ini -l 10
+</pre>
 
 2. Start the Broker:
+<pre lang="markdown"> 
 python3 BrokerAppln.py --group 0 -n broker -a localhost -p 5570 -T 3 -c config.ini -l 10
+</pre>
 
 3. Start Publishers:
+<pre lang="markdown"> 
 python3 PublisherAppln.py --group 0 -n pub1 -a localhost -p 5577 -T 3 -f 1 -i 100 -c config.ini -l 10
 python3 PublisherAppln.py --group 0 -n pub2 -a localhost -p 5578 -T 3 -f 1 -i 100 -c config.ini -l 10
-
+</pre>
 4. Start Subscribers:
+<pre lang="markdown"> 
 python3 SubscriberAppln.py --group 0 -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10 -t -f latency.json
 python3 SubscriberAppln.py --group 0 -n sub2 -a localhost -p 5561 -T 3 -c config.ini -l 10 -t -f latency2.json
-
+</pre>
 Note: Each service instance (Discovery, Broker, Publisher, Subscriber) uses the same --group value to operate within the same ZooKeeper partition. You can create multiple groups (e.g., group 1, group 2) by launching additional instances with different --group values.
 
 ---
