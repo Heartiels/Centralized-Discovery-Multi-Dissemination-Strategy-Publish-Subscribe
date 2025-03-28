@@ -22,7 +22,7 @@ The base architecture remains unchanged from Assignment 2. Assignment 3 introduc
 ## File Structure
 
 
-<pre lang="markdown"> ├── CS6381_MW/
+<pre lang="markdown">├── CS6381_MW/
 │   ├── __init__.py                
 │   ├── BrokerMW.py                # Updated with load balancing (group) support
 │   ├── Common.py                  
