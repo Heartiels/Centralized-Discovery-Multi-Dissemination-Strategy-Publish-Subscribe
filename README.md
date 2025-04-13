@@ -101,12 +101,12 @@ The core architecture remains similar to previous assignments but now includes Q
 
 2. Start Publishers (specify same group and history offered, e.g., 10):
 <pre lang="markdown"> python3 PublisherAppln.py --group 0 --history-offered 10 -n pub1 -a localhost -p 5577 -T 3 -f 1 -i 100 -c config.ini -l 10
-python3 PublisherAppln.py --group 0 --history-offered 10 -n pub2 -a localhost -p 5578 -T 3 -f 1 -i 100 -c config.ini -l 10
+ python3 PublisherAppln.py --group 0 --history-offered 10 -n pub2 -a localhost -p 5578 -T 3 -f 1 -i 100 -c config.ini -l 10
 </pre>
 
 3. Start Subscribers (specify same group, history request, and a deadline, e.g., 5 and 50ms):
 <pre lang="markdown"> python3 SubscriberAppln.py --group 0 --history-request 5 --deadline 50 -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10 -t -f latency_sub1.json
-python3 SubscriberAppln.py --group 0 --history-request 5 --deadline 50 -n sub2 -a localhost -p 5561 -T 3 -c config.ini -l 10 -t -f latency_sub2.json
+ python3 SubscriberAppln.py --group 0 --history-request 5 --deadline 50 -n sub2 -a localhost -p 5561 -T 3 -c config.ini -l 10 -t -f latency_sub2.json
 </pre>
 
 5.2 ViaBroker Dissemination Mode (with ZooKeeper and group-based load balancing)
@@ -121,12 +121,12 @@ python3 SubscriberAppln.py --group 0 --history-request 5 --deadline 50 -n sub2 -
 
 3. Start Publishers:
 <pre lang="markdown"> python3 PublisherAppln.py --group 0 --history-offered 10 -n pub1 -a localhost -p 5577 -T 3 -f 1 -i 100 -c config.ini -l 10
-python3 PublisherAppln.py --group 0 --history-offered 10 -n pub2 -a localhost -p 5578 -T 3 -f 1 -i 100 -c config.ini -l 10
+ python3 PublisherAppln.py --group 0 --history-offered 10 -n pub2 -a localhost -p 5578 -T 3 -f 1 -i 100 -c config.ini -l 10
 </pre>
 
 4. Start Subscribers:
 <pre lang="markdown"> python3 SubscriberAppln.py --group 0 --history-request 5 --deadline 50 -n sub1 -a localhost -p 5560 -T 3 -c config.ini -l 10 -t -f latency_sub1.json
-python3 SubscriberAppln.py --group 0 --history-request 5 --deadline 50 -n sub2 -a localhost -p 5561 -T 3 -c config.ini -l 10 -t -f latency_sub2.json
+ python3 SubscriberAppln.py --group 0 --history-request 5 --deadline 50 -n sub2 -a localhost -p 5561 -T 3 -c config.ini -l 10 -t -f latency_sub2.json
 </pre>
 
 Note: All components must be launched with the same --group value to work within the same ZooKeeper partition. You can launch additional groups by specifying different group IDs.
@@ -151,14 +151,14 @@ Programming Assignment 1: https://youtu.be/rihmkwGVek8
 
 Programming Assignment 2: https://youtu.be/9kSFTGLd9-c
 
-Programming Assignment 3: Pictures are enough to show our results
+Programming Assignment 3: Pictures are enough to show our results.
 Latency testing in Milestone 1 shows that the added ZooKeeper-based group logic does not introduce significant overhead.
 Most message latencies remain within 1–2ms, with occasional spikes due to expected network variance. The system remains responsive and scalable under multiple logical groups.
 ![image](https://github.com/Heartiels/Centralized-Discovery-Multi-Dissemination-Strategy-Publish-Subscribe/blob/main/latency_results/result.png)
 
 Programming Assignment 4: https://youtu.be/3j4W5Q1WeGw
 
-Authors
+## Authors
 Haowen Yao
 Xindong Zheng
 Yan Zhang
