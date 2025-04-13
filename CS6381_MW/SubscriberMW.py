@@ -57,6 +57,7 @@ class SubscriberMW:
             self.group_id = args.group if hasattr(args, "group") else "0"
             self.toggle = args.toggle
             self.filename = args.filename
+            self.deadline = int(args.deadline)
 
             config = configparser.ConfigParser()
             config.read(args.config)
@@ -229,6 +230,17 @@ class SubscriberMW:
             topic, content, timestamp = parts
             latency = (time.time() - float(timestamp)) * 1000
             self.logger.info(f"Received topic: {topic}, latency: {latency:.2f} ms")
+
+            if latency > self.deadline:
+                self.logger.error(f"Deadline miss for topic {topic}: latency {latency:.2f} ms exceeds deadline {self.deadline} ms")
+                try:
+                    node_path = f"/deadline_miss/group_{self.group_id}"
+                    if not self.zk.exists(node_path):
+                        self.zk.create(node_path, value=f"Deadline miss on topic {topic}: {latency:.2f} ms".encode(), ephemeral=True, makepath=True)
+                    else:
+                        self.zk.set(node_path, f"Deadline miss on topic {topic}: {latency:.2f} ms".encode())
+                except Exception as e:
+                    self.logger.error(f"Failed to update deadline_miss node: {e}")
 
             if topic not in self.logging_dict:
                 self.logging_dict[topic] = [latency]

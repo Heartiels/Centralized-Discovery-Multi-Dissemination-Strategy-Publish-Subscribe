@@ -249,31 +249,32 @@ class DiscoveryAppln:
 
             # 处理注册
             self.logger.info(
-                f"Received registration request from {register_req.info.addr}:{register_req.info.port} "
-                f"for topics {register_req.topiclist}"
+                f"Received registration request from {register_req.info.addr}:{register_req.info.port} for topics {register_req.topiclist}"
             )
-            role_str = "publishers" if register_req.role == discovery_pb2.ROLE_PUBLISHER else "subscribers"
-            path = f"/registrations/group_{self.group_id}/{role_str}/{register_req.info.id}"
-            data = json.dumps({
-                "addr": register_req.info.addr,
-                "port": register_req.info.port,
-                "topics": list(register_req.topiclist)
-            }).encode()
+            role_str = "publishers" if register_req.role == discovery_pb2.ROLE_PUBLISHER else \
+                    ("subscribers" if register_req.role == discovery_pb2.ROLE_SUBSCRIBER else "broker")
 
-            if self.zk.exists(path):
-                self.zk.set(path, data)  # 如果已经存在，则更新数据
-            else:
-                self.zk.create(path, data, ephemeral=True, makepath=True)  # 创建新的临时节点
-
-            self.logger.info(f"Registered {role_str} node: {path}")
             if register_req.role == discovery_pb2.ROLE_PUBLISHER:
                 for topic in register_req.topiclist:
-                    self.hm.setdefault(topic, []).append(
-                        (register_req.info.id, register_req.info.addr, register_req.info.port)
+                    # 确保 ownership 父节点存在
+                    ownership_path = f"/ownership/{topic}"
+                    self.zk.ensure_path(ownership_path)
+                    # 在 /ownership/<topic>/ 下创建一个临时顺序节点
+                    node_path = self.zk.create(
+                        f"{ownership_path}/publisher_",
+                        register_req.info.id.encode(),
+                        ephemeral=True,
+                        sequence=True
                     )
-                    self.pubset.add((register_req.info.id, register_req.info.addr, register_req.info.port))
+                    # 提取创建节点中的序列号，作为 ownership strength（数字越小，优先级越高）
+                    seq_str = node_path.split("_")[-1]
+                    ownership_strength = int(seq_str)
+                    # 存储注册信息中增加 ownership_strength
+                    self.hm.setdefault(topic, []).append(
+                        (register_req.info.id, register_req.info.addr, register_req.info.port, ownership_strength)
+                    )
+                    self.logger.debug(f"Registered publisher for topic {topic} with ownership strength {ownership_strength}")
                 self.cur_pubs += 1
-                self.logger.info(f"Registered publisher: {register_req.info.id}, Topics: {register_req.topiclist}")
 
             elif register_req.role == discovery_pb2.ROLE_SUBSCRIBER:
                 for topic in register_req.topiclist:
@@ -281,7 +282,6 @@ class DiscoveryAppln:
                         (register_req.info.id, register_req.info.addr, register_req.info.port)
                     )
                 self.cur_subs += 1
-                self.logger.info(f"Registered subscriber: {register_req.info.id}, Topics: {register_req.topiclist}")
 
             elif register_req.role == discovery_pb2.ROLE_BOTH:
                 self.broker_addr = register_req.info.addr
@@ -289,7 +289,7 @@ class DiscoveryAppln:
                 self.logger.info(f"Registered broker: {register_req.info.id}, Addr: {self.broker_addr}, Port: {self.broker_port}")
 
             ready_resp = discovery_pb2.RegisterResp()
-            ready_resp.status = discovery_pb2.STATUS_SUCCESS  # 确保返回 SUCCESS 状态
+            ready_resp.status = discovery_pb2.STATUS_SUCCESS  # 返回成功状态
             discovery_resp = discovery_pb2.DiscoveryResp()
             discovery_resp.msg_type = discovery_pb2.MsgTypes.TYPE_REGISTER
             discovery_resp.register_resp.CopyFrom(ready_resp)
@@ -309,20 +309,34 @@ class DiscoveryAppln:
             lookup_resp = discovery_pb2.LookupPubByTopicResp()
             if self.dissemination == "Broker":
                 temp = discovery_pb2.RegistrantInfo()
-                temp.id = "Broker"
-                temp.addr = self.broker_addr
-                temp.port = self.broker_port
+                if self.broker_addr is None:
+                    self.logger.error("No broker registered. Returning default broker info.")
+                    temp.id = "Broker"
+                    temp.addr = "localhost"
+                    temp.port = 5570
+                else:
+                    temp.id = "Broker"
+                    temp.addr = self.broker_addr
+                    temp.port = self.broker_port
                 lookup_resp.array.append(temp)
             else:
                 for topic in lookup_req.topiclist:
                     self.logger.debug(f"Processing topic: {topic}")
                     if topic in self.hm:
-                        for tup in self.hm[topic]:
-                            temp = discovery_pb2.RegistrantInfo()
-                            temp.id = tup[0]
-                            temp.addr = tup[1]
-                            temp.port = tup[2]
-                            lookup_resp.array.append(temp)
+                        pub_list = self.hm[topic]
+                        # 按 ownership_strength 排序，取最小的那个
+                        pub_list.sort(key=lambda x: x[3])
+                        best_pub = pub_list[0]
+                        req_history = 0
+                        offered_history = best_pub[4] if len(best_pub) > 4 else 0
+                        if req_history > offered_history:
+                            self.logger.warning(f"For topic {topic}, requested history {req_history} exceeds offered {offered_history}")
+                            continue
+                        temp = discovery_pb2.RegistrantInfo()
+                        temp.id = best_pub[0]
+                        temp.addr = best_pub[1]
+                        temp.port = best_pub[2]
+                        lookup_resp.array.append(temp)
                     else:
                         self.logger.warning(f"No publisher found for topic {topic}")
 

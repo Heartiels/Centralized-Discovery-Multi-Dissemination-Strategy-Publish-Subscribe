@@ -90,19 +90,19 @@ class PublisherAppln:
     def register_with_zookeeper(self):
       """将 Publisher 注册到 ZooKeeper 的正确路径"""
       try:
-        path = f"/registrations/publishers/{self.name}"  # 修改注册路径
+        path = f"/registrations/group_0/publishers/{self.name}"
         data = json.dumps({
           "addr": self.mw_obj.addr,
           "port": self.mw_obj.port,
-          "topics": self.topiclist
+          "topics": self.topiclist,
+          "history": self.mw_obj.history_length
         }).encode()
-
         if self.zk.exists(path):
           self.logger.info(f"Publisher node already exists: {path}, updating data")
-          self.zk.set(path, data)  # 如果已经存在，则更新数据
+          self.zk.set(path, data)
         else:
           self.logger.info(f"Creating Publisher node in ZooKeeper: {path}")
-          self.zk.create(path, value=data, ephemeral=True, makepath=True)  # 创建新的临时节点
+          self.zk.create(path, value=data, ephemeral=True, makepath=True)
 
       except Exception as e:
         self.logger.error(f"Failed to register Publisher in ZooKeeper: {e}")
@@ -236,6 +236,7 @@ def parseCmdLineArgs():
     parser.add_argument("-i", "--iters", type=int, default=1000, help="Number of iterations")
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, help="Logging level")
     parser.add_argument("--group", default="0", help="Load balancing group ID for Publisher")
+    parser.add_argument("--history-offered", default="10", help="Offered history length for Publisher")
 
     return parser.parse_args()
 

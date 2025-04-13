@@ -45,6 +45,8 @@ class PublisherMW:
         self.dissemination = None  # "Direct" or "Broker"
         self.context = None
         self.primary_discovery = None  # Current primary discovery address
+        self.history_length = 10
+        self.history = {}
 
     def configure(self, args, zk_client):
         try:
@@ -57,6 +59,11 @@ class PublisherMW:
             self.addr = args.addr
 
             self.group_id = args.group if hasattr(args, "group") else "0"
+
+            if hasattr(args, "history_offered"):
+                self.history_length = int(args.history_offered)
+            else:
+                self.history_length = 10
 
             config = configparser.ConfigParser()
             config.read(args.config)
@@ -237,10 +244,18 @@ class PublisherMW:
     def disseminate(self, id, topic, data):
         try:
             self.logger.debug("PublisherMW::disseminate")
-            send_str = topic + ":" + data + ":" + str(time.time())
+            send_str = f"{topic}:{data}:{str(time.time())}"
             self.logger.debug(f"PublisherMW::disseminate - sending: {send_str}")
-            self.pub.send(bytes(send_str, "utf-8"))
+            # 先发送消息
+            self.pub.send(send_str.encode("utf-8"))
             self.logger.debug("PublisherMW::disseminate complete")
+            # 保存历史数据
+            if topic not in self.history:
+                self.history[topic] = []
+            self.history[topic].append((data, time.time()))
+            # 控制历史列表长度
+            if len(self.history[topic]) > self.history_length:
+                self.history[topic].pop(0)
         except Exception as e:
             self.logger.error(f"PublisherMW::disseminate error: {e}")
             raise e

@@ -137,6 +137,7 @@ class SubscriberAppln:
             elif self.state == self.State.LOOKUP:
                 self.logger.info("SubscriberAppln::invoke_operation - performing lookup")
                 self.mw_obj.plz_lookup(self.topiclist)
+                self.state = self.State.ACCEPT
                 return None
             elif self.state == self.State.ACCEPT:
                 self.logger.info("SubscriberAppln::invoke_operation - ready to accept dissemination")
@@ -218,6 +219,8 @@ def parseCmdLineArgs():
     parser.add_argument("-c", "--config", default="config.ini", help="Configuration file")
     parser.add_argument("--group", default="0", help="Load balancing group ID for Subscriber")
     parser.add_argument("-l", "--loglevel", type=int, default=logging.INFO, help="Logging level")
+    parser.add_argument("--history-request", default="0", help="Requested history length for Subscriber")
+    parser.add_argument("--deadline", type=int, default=50, help="Deadline QoS threshold in milliseconds")
     return parser.parse_args()
 
 
