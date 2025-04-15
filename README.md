@@ -151,7 +151,7 @@ Programming Assignment 1: https://youtu.be/rihmkwGVek8
 
 Programming Assignment 2: https://youtu.be/9kSFTGLd9-c
 
-Programming Assignment 3: Pictures are enough to show our results.
+Programming Assignment 3: https://www.youtube.com/watch?v=zYPHiReE8KE
 Latency testing in Milestone 1 shows that the added ZooKeeper-based group logic does not introduce significant overhead.
 Most message latencies remain within 1–2ms, with occasional spikes due to expected network variance. The system remains responsive and scalable under multiple logical groups.
 ![image](https://github.com/Heartiels/Centralized-Discovery-Multi-Dissemination-Strategy-Publish-Subscribe/blob/main/latency_results/result.png)
