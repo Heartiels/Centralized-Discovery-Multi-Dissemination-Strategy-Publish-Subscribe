@@ -157,6 +157,7 @@ Most message latencies remain within 1–2ms, with occasional spikes due to expe
 ![image](https://github.com/Heartiels/Centralized-Discovery-Multi-Dissemination-Strategy-Publish-Subscribe/blob/main/latency_results/result.png)
 
 Programming Assignment 4: https://youtu.be/3j4W5Q1WeGw
+https://docs.google.com/document/d/1Y_a6sdufmlnb37xRuGtZoR22_0hjhR83Xgnc60JLYvQ/edit?usp=sharing
 
 ## Authors
 Haowen Yao
